@@ -3,7 +3,7 @@ import express from "express";
 import { middleware, Client } from "@line/bot-sdk";
 import "dotenv/config";
 import { upsertUserId } from "./db.js";
-import { fetchThaiGoldBar965 } from "./fetchGoldGTA.js";
+import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js";
 import { handleCommand } from "./commands.js";
 
 export const webhookApp = express();
@@ -29,7 +29,7 @@ webhookApp.post(
         if (ev.type === "message" && ev.message?.type === "text") {
           const text = ev.message.text;
 
-          const p = await fetchThaiGoldBar965();
+          const p = await fetchHSHGoldBar965();
           const reply = await handleCommand(text, p.sell); // ✅ await
 
           await client.replyMessage(ev.replyToken, {
