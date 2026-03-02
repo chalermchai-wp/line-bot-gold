@@ -1,93 +1,146 @@
-// src/worker.js
 import "dotenv/config";
-// import { fetchThaiGoldBar965 } from "./fetchGoldGTA.js";
-import { fetchHSHGoldBar965 } from "./fetchGoldHSH.js";
+import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js"; // หรือ HSH
 import {
   insertPrice,
-  getLastNCloses,
   getLastTwoSells,
   listUserIds,
   getAlertState,
-  setAlertState
+  setAlertState,
+  BAHT_GOLD_GRAMS,
+  getPortfolio
 } from "./db.js";
-import { ema, rsi } from "./indicators.js";
 import { pushText } from "./line.js";
 
 function fmt(n) {
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: 2 }).format(n);
 }
 
-export async function runOnce() {
-  const p = await fetchHSHGoldBar965();
+function calcPnL(currentSellPerBaht) {
+  const p = getPortfolio(); // { grams, avg_cost_per_gram, realized_pnl }
+  const grams = Number(p.grams);
+  const avg = Number(p.avg_cost_per_gram);
+  const realized = Number(p.realized_pnl);
 
-  insertPrice({ ts: p.fetchedAt, buy: p.buy, sell: p.sell });
+  const sellPerGram = currentSellPerBaht / BAHT_GOLD_GRAMS;
+  const unrealized = (sellPerGram - avg) * grams;
+  const total = realized + unrealized;
 
-  const closes = getLastNCloses(200);
-  const e9 = ema(closes, 9);
-  const e21 = ema(closes, 21);
-  const r = rsi(closes, 14);
+  return { grams, avg, realized, unrealized, total, sellPerGram, avgPerBaht: avg * BAHT_GOLD_GRAMS };
+}
 
-  const over = Number(process.env.ALERT_SELL_OVER || 80000);
-  const under = Number(process.env.ALERT_SELL_UNDER || 78000);
+function diffAlert(currSell, prevSell) {
+  const diff100 = Number(process.env.ALERT_DIFF_100 || 100);
+  const diff200 = Number(process.env.ALERT_DIFF_200 || 200);
 
-  const signals = [];
+  const diff = currSell - prevSell;
+  const abs = Math.abs(diff);
 
-  // ----- existing alerts -----
-  if (p.sell >= over) signals.push(`🚀 แตะเป้า: ขายออก ≥ ${fmt(over)} (ตอนนี้ ${fmt(p.sell)})`);
-  if (p.sell <= under) signals.push(`⚠️ หลุดแนวรับ: ขายออก ≤ ${fmt(under)} (ตอนนี้ ${fmt(p.sell)})`);
+  const lastLevel = Number(getAlertState("last_diff_level", "0"));
+  let level = 0;
+  if (abs >= diff200) level = 200;
+  else if (abs >= diff100) level = 100;
 
-  if (e9 && e21) {
-    const trend = e9 > e21 ? "ขาขึ้น" : "ขาลง/พักตัว";
-    signals.push(`📈 Trend(EMA9/21): ${trend} (EMA9=${fmt(e9)} / EMA21=${fmt(e21)})`);
+  if (level === 0 && lastLevel !== 0) {
+    setAlertState("last_diff_level", "0");
+    return null;
   }
-  if (r != null) {
-    const zone = r >= 70 ? "Overbought" : r <= 30 ? "Oversold" : "Neutral";
-    signals.push(`📊 RSI14: ${fmt(r)} (${zone})`);
+  if (level > lastLevel) {
+    setAlertState("last_diff_level", String(level));
+    const dir = diff > 0 ? "ขึ้น" : "ลง";
+    const emoji = diff > 0 ? "📈" : "📉";
+    return `${emoji} ราคา${dir} ${fmt(abs)} บาท (จาก ${fmt(prevSell)} → ${fmt(currSell)})`;
   }
+  return null;
+}
 
-  // ----- ✅ NEW: diff alerts (+/-100, +/-200) -----
-  const diffCfg100 = Number(process.env.ALERT_DIFF_100 || 100);
-  const diffCfg200 = Number(process.env.ALERT_DIFF_200 || 200);
+function shouldSendReport({ currSell, totalPnL }) {
+  // กันสแปม: ส่งเมื่อ "ราคาเปลี่ยน" หรือ "กำไรเปลี่ยน" มากพอ
+  const priceStep = Number(process.env.REPORT_PRICE_STEP || 100); // บาท
+  const pnlStep = Number(process.env.REPORT_PNL_STEP || 500);     // บาท
 
-  const two = getLastTwoSells();
-  if (two) {
-    const diff = two.currSell - two.prevSell;
-    const abs = Math.abs(diff);
+  const lastSell = Number(getAlertState("last_report_sell", "0"));
+  const lastPnl = Number(getAlertState("last_report_total", "0"));
 
-    // last level: "0" | "100" | "200"
-    const lastLevel = Number(getAlertState("last_diff_level", "0"));
+  const priceChanged = Math.abs(currSell - lastSell) >= priceStep;
+  const pnlChanged = Math.abs(totalPnL - lastPnl) >= pnlStep;
 
-    let level = 0;
-    if (abs >= diffCfg200) level = 200;
-    else if (abs >= diffCfg100) level = 100;
+  if (priceChanged || pnlChanged) {
+    setAlertState("last_report_sell", String(currSell));
+    setAlertState("last_report_total", String(totalPnL));
+    return true;
+  }
+  return false;
+}
 
-    // กันสแปม:
-    // - ส่งเมื่อ "level > lastLevel" (เช่น 0->100, 100->200)
-    // - ถ้ากลับมา <100 ให้ reset เป็น 0 เพื่อรอรอบใหม่
-    if (level === 0 && lastLevel !== 0) {
-      setAlertState("last_diff_level", "0");
-    } else if (level > lastLevel) {
-      const dir = diff > 0 ? "ขึ้น" : "ลง";
-      const emoji = diff > 0 ? "📈" : "📉";
-      signals.unshift(
-        `${emoji} เปลี่ยนจากรอบก่อน: ${dir} ${fmt(abs)} บาท (จาก ${fmt(two.prevSell)} → ${fmt(two.currSell)})`
-      );
-      setAlertState("last_diff_level", String(level));
+function milestoneAlerts(totalPnL) {
+  // แจ้ง milestone แบบครั้งเดียวเมื่อข้ามระดับ
+  const milestones = (process.env.PNL_MILESTONES || "10000,20000,50000")
+    .split(",")
+    .map(x => Number(x.trim()))
+    .filter(Boolean)
+    .sort((a, b) => a - b);
+
+  const lastMilestone = Number(getAlertState("last_pnl_milestone", "0"));
+  for (const m of milestones) {
+    if (totalPnL >= m && lastMilestone < m) {
+      setAlertState("last_pnl_milestone", String(m));
+      return `🏁 Total PnL ทะลุ ${fmt(m)} บาท (ตอนนี้ ${fmt(totalPnL)})`;
     }
   }
 
-  const msg =
-    `ราคาทองคำแท่ง 96.5% (สมาคมค้าทองคำ)\n` +
-    `รับซื้อ: ${fmt(p.buy)} | ขายออก: ${fmt(p.sell)}\n` +
-    `เวลา: ${p.fetchedAt}\n\n` +
-    signals.join("\n");
+  // แจ้งเมื่อจากบวก -> ติดลบ
+  const lastSign = getAlertState("last_pnl_sign", "unknown");
+  const signNow = totalPnL >= 0 ? "pos" : "neg";
+  if (lastSign !== "unknown" && lastSign !== signNow) {
+    setAlertState("last_pnl_sign", signNow);
+    return signNow === "neg"
+      ? `🔴 Total PnL กลับมาติดลบ (${fmt(totalPnL)})`
+      : `🟢 Total PnL กลับมาเป็นบวก (${fmt(totalPnL)})`;
+  }
+  setAlertState("last_pnl_sign", signNow);
 
+  return null;
+}
+
+export async function runOnce() {
+  const price = await fetchHSHGoldBar965(); // { buy, sell, fetchedAt }
+
+  insertPrice({ ts: price.fetchedAt, buy: price.buy, sell: price.sell });
+
+  const pnl = calcPnL(price.sell);
   const userIds = listUserIds();
+  if (!userIds.length) return;
 
-  // ✅ ส่งเฉพาะเมื่อมีสัญญาณ
-  if (userIds.length && signals.length) {
-    await Promise.all(userIds.map(uid => pushText(uid, msg)));
+  const signals = [];
+
+  // 1) diff alert ±100/±200
+  const two = getLastTwoSells();
+  if (two) {
+    const s = diffAlert(two.currSell, two.prevSell);
+    if (s) signals.push(s);
   }
 
-  return { ...p, e9, e21, r, signalsCount: signals.length };
+  // 2) PnL milestone/sign alerts
+  const m = milestoneAlerts(pnl.total);
+  if (m) signals.push(m);
+
+  // 3) รายงานพอร์ต (ส่งเมื่อเปลี่ยนเยอะพอ)
+  const sendReport = shouldSendReport({ currSell: price.sell, totalPnL: pnl.total });
+
+  if (!sendReport && signals.length === 0) return;
+
+  const msg =
+    `ราคาทองคำแท่ง 96.5%\n` +
+    `รับซื้อ: ${fmt(price.buy)} | ขายออก: ${fmt(price.sell)}\n` +
+    `เวลา: ${price.fetchedAt}\n\n` +
+    `📌 Portfolio\n` +
+    `ถือ: ${pnl.grams.toFixed(4)} g\n` +
+    `ต้นทุนเฉลี่ย: ${fmt(pnl.avgPerBaht)} บาท/บาททอง\n\n` +
+    `💰 PnL\n` +
+    `Realized: ${fmt(pnl.realized)}\n` +
+    `Unrealized: ${fmt(pnl.unrealized)}\n` +
+    `Total: ${fmt(pnl.total)}\n` +
+    (signals.length ? `\n🔔 Alerts\n${signals.join("\n")}` : "");
+
+  await Promise.all(userIds.map(uid => pushText(uid, msg)));
 }
