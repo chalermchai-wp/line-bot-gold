@@ -1,5 +1,5 @@
 // src/db.js
-import mariadb from "mariadb";
+import * as mariadb from "mariadb";
 import "dotenv/config";
 
 export const BAHT_GOLD_GRAMS = 15.244;
