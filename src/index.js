@@ -10,11 +10,19 @@ app.use(webhookApp);
 
 app.get("/", (_, res) => res.send("gold-bot running"));
 
-const port = Number(process.env.PORT || 3000);
+const port = Number(process.env.PORT);
+if (!port) {
+  console.error("PORT is missing (Plesk should provide it)");
+  process.exit(1);
+}
 
-await initDb();
+app.listen(port, "0.0.0.0", () => console.log(`Listening on :${port}`));
 
-app.listen(port, () => console.log(`Listening on :${port}`));
+// init DB after server is up (important for Plesk)
+initDb().then(
+  () => console.log("✅ MariaDB initialized"),
+  (e) => console.error("❌ initDb failed:", e)
+);
 
 cron.schedule(process.env.CRON || "*/15 * * * *", async () => {
   try {
