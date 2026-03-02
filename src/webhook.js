@@ -29,7 +29,17 @@ webhookApp.post(
         if (ev.type === "message" && ev.message?.type === "text") {
           const text = ev.message.text;
 
-          const p = await fetchHSHGoldBar965();
+          let p;
+          try {
+            p = await fetchHSHGoldBar965();
+          } catch (e) {
+            console.error("fetchHSHGoldBar965 failed:", e?.message || e);
+            await client.replyMessage(ev.replyToken, {
+              type: "text",
+              text: "ตอนนี้ดึงราคาทองจาก HSH ไม่สำเร็จ ลองใหม่อีกครั้งครับ"
+            });
+            continue;
+          }
           const reply = await handleCommand(text, p.sell); // ✅ await
 
           await client.replyMessage(ev.replyToken, {
