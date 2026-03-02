@@ -5,19 +5,48 @@ function toNumber(v) {
   return Number(String(v ?? "").replace(/,/g, "").trim());
 }
 
-// หา key ใน object แบบ recursive
-function findAllByKey(obj, targetKey, out = []) {
-  if (!obj || typeof obj !== "object") return out;
+function pickFromJsonArray(arr) {
+  // prefer: GoldType=HSH, GoldCode=96.50
+  const norm = (s) => String(s ?? "").trim().toUpperCase();
+  const candidates = arr.filter(x => String(x?.GoldCode ?? "").trim() === "96.50");
+  const item =
+    candidates.find(x => norm(x.GoldType) === "HSH") ||
+    candidates.find(x => norm(x.GoldType) === "REF") ||
+    candidates.find(x => norm(x.GoldType) !== "JEWEL") ||
+    candidates[0];
 
-  if (Object.prototype.hasOwnProperty.call(obj, targetKey)) {
-    out.push(obj[targetKey]);
+  if (!item) throw new Error("Cannot find GoldCode=96.50 in HSH JSON response");
+
+  const buy = toNumber(item.Buy);
+  const sell = toNumber(item.Sell);
+  const fetchedAt = item.TimeUpdate ? new Date(item.TimeUpdate).toISOString() : new Date().toISOString();
+
+  if (!Number.isFinite(buy) || !Number.isFinite(sell) || buy <= 0 || sell <= 0) {
+    throw new Error("HSH JSON matched but Buy/Sell invalid");
   }
 
-  for (const k of Object.keys(obj)) {
-    const v = obj[k];
-    if (v && typeof v === "object") findAllByKey(v, targetKey, out);
-  }
-  return out;
+  return { buy, sell, fetchedAt, source: "HSH", raw: { GoldType: item.GoldType, GoldCode: item.GoldCode } };
+}
+
+function pickFromXmlText(xmlText) {
+  const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, trimValues: true });
+  const obj = parser.parse(xmlText);
+
+  // path ปกติของ HSH XML
+  const list = obj?.ArrayOfGoldPriceStruct?.GoldPriceStruct;
+  const arr = Array.isArray(list) ? list : list ? [list] : [];
+  if (!arr.length) throw new Error("HSH XML parsed but no GoldPriceStruct found");
+
+  // map ให้มี shape คล้าย JSON
+  const mapped = arr.map(x => ({
+    GoldType: x.GoldType,
+    GoldCode: x.GoldCode,
+    Buy: x.Buy,
+    Sell: x.Sell,
+    TimeUpdate: x.TimeUpdate
+  }));
+
+  return pickFromJsonArray(mapped);
 }
 
 export async function fetchHSHGoldBar965() {
@@ -25,73 +54,37 @@ export async function fetchHSHGoldBar965() {
 
   const res = await axios.get(URL, {
     timeout: 15000,
-    responseType: "text",
+    responseType: "text",          // ✅ เอาเป็น text ก่อน จะได้ตรวจเอง
+    validateStatus: () => true,    // ✅ ไม่ throw เพื่อ debug ได้
     headers: {
-      Accept: "*/*",
+      Accept: "application/json, text/xml;q=0.9, */*;q=0.8",
       "User-Agent": "gold-bot/1.0"
     }
   });
 
-  const xml = res.data;
-  if (typeof xml !== "string" || !xml.trim().startsWith("<")) {
-    throw new Error("HSH response is not XML text");
+  const body = typeof res.data === "string" ? res.data : String(res.data ?? "");
+  const ct = String(res.headers?.["content-type"] ?? "");
+
+  if (res.status !== 200) {
+    throw new Error(`HSH http ${res.status} ct=${ct} head=${body.slice(0, 80)}`);
   }
 
-  const parser = new XMLParser({
-    ignoreAttributes: false,
-    removeNSPrefix: true,
-    trimValues: true
-  });
-
-  const obj = parser.parse(xml);
-
-  // ดึง GoldPriceStruct จากที่ไหนก็ได้
-  const hits = findAllByKey(obj, "GoldPriceStruct");
-  if (!hits.length) {
-    console.error("HSH parsed root keys:", Object.keys(obj || {}));
-    throw new Error("HSH XML parsed but no GoldPriceStruct found (structure mismatch)");
+  // ✅ JSON path (หลัก)
+  if (ct.includes("application/json") || body.trim().startsWith("[")) {
+    let arr;
+    try {
+      arr = JSON.parse(body);
+    } catch (e) {
+      throw new Error(`HSH JSON parse failed: ${e?.message || e}`);
+    }
+    if (!Array.isArray(arr)) throw new Error("HSH JSON is not array");
+    return pickFromJsonArray(arr);
   }
 
-  // hits อาจเป็น array หรือ object หรือ array ซ้อน
-  const list = hits
-    .flatMap((x) => (Array.isArray(x) ? x : [x]))
-    .flatMap((x) => (Array.isArray(x) ? x : [x]))
-    .filter((x) => x && typeof x === "object");
-
-  if (!list.length) {
-    throw new Error("HSH XML parsed but GoldPriceStruct list empty");
+  // ✅ XML fallback
+  if (body.trim().startsWith("<")) {
+    return pickFromXmlText(body);
   }
 
-  // เลือก: GoldCode=96.50 และ prefer GoldType=HSH > REF และไม่เอา JEWEL
-  const candidates = list.filter((x) => String(x.GoldCode ?? "").trim() === "96.50");
-
-  const normType = (x) => String(x.GoldType ?? "").trim().toUpperCase();
-  const pick =
-    candidates.find((x) => normType(x) === "HSH") ||
-    candidates.find((x) => normType(x) === "REF") ||
-    candidates.find((x) => normType(x) !== "JEWEL") ||
-    candidates[0];
-
-  if (!pick) {
-    // log ช่วยดู schema จริง
-    console.error("HSH list sample:", list.slice(0, 5));
-    throw new Error("Cannot find GoldCode=96.50 in HSH XML response");
-  }
-
-  const buy = toNumber(pick.Buy);
-  const sell = toNumber(pick.Sell);
-  const fetchedAt = pick.TimeUpdate ? new Date(pick.TimeUpdate).toISOString() : new Date().toISOString();
-
-  if (!Number.isFinite(buy) || !Number.isFinite(sell) || buy <= 0 || sell <= 0) {
-    console.error("HSH matched but Buy/Sell invalid:", pick);
-    throw new Error("HSH matched item but Buy/Sell invalid");
-  }
-
-  return {
-    buy,
-    sell,
-    fetchedAt,
-    source: "HSH",
-    raw: { GoldCode: pick.GoldCode, GoldType: pick.GoldType }
-  };
+  throw new Error(`HSH unknown format ct=${ct} head=${body.slice(0, 120)}`);
 }
