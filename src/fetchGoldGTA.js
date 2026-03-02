@@ -1,73 +1,61 @@
 import axios from "axios";
-import * as cheerio from "cheerio";
+import { XMLParser } from "fast-xml-parser";
 
 function toNumber(v) {
-  // API บางทีส่งเป็น string เช่น "79,550" หรือ "79550"
-  return Number(String(v).replace(/,/g, "").trim());
-}
-
-function parseNumber(str) {
-  // "78,750.00" -> 78750
-  return Number(String(str).replace(/,/g, "").trim());
+  return Number(String(v ?? "").replace(/,/g, "").trim());
 }
 
 export async function fetchHSHGoldBar965() {
   const URL = "https://apicheckpricev3.huasengheng.com/api/Values/GetPrice";
 
-  const { data } = await axios.get(URL, { timeout: 15000 });
+  const res = await axios.get(URL, {
+    timeout: 15000,
+    // บังคับรับเป็น text เพื่อ parse XML แน่นอน
+    responseType: "text",
+    headers: {
+      Accept: "*/*",
+      "User-Agent": "gold-bot/1.0"
+    }
+  });
 
-  if (!Array.isArray(data)) {
-    throw new Error("Unexpected HSH API response (not array)");
+  const xml = res.data;
+
+  const parser = new XMLParser({
+    ignoreAttributes: false,
+    // กันเคส tag เดี่ยว/หลายตัว
+    isArray: (name) => name === "GoldPriceStruct"
+  });
+
+  const obj = parser.parse(xml);
+
+  // โครงสร้างตามตัวอย่าง:
+  // obj.ArrayOfGoldPriceStruct.GoldPriceStruct = [ ... ]
+  const list =
+    obj?.ArrayOfGoldPriceStruct?.GoldPriceStruct ||
+    obj?.["ArrayOfGoldPriceStruct"]?.["GoldPriceStruct"];
+
+  if (!Array.isArray(list) || list.length === 0) {
+    throw new Error("HSH XML parsed but no GoldPriceStruct found");
   }
 
-  // ต้อง “ดูค่าจริง” ว่า GoldType/GoldCode ของ “ทองคำแท่ง 96.5%” คืออะไร
-  // ตัวอย่าง filter แบบยืดหยุ่น:
-  const item =
-    data.find(x => String(x.GoldType || "").includes("96.5") && String(x.GoldType || "").includes("แท่ง")) ||
-    data.find(x => String(x.GoldCode || "").includes("BAR") && String(x.GoldType || "").includes("96.5")) ||
-    data.find(x => String(x.GoldType || "").includes("96.5"));
+  // filter: 96.50 + prefer GoldType=HSH, fallback REF, exclude JEWEL
+  const candidates = list.filter((x) => String(x.GoldCode).trim() === "96.50");
+
+  const prefer = (type) => candidates.find((x) => String(x.GoldType).trim().toUpperCase() === type);
+
+  const item = prefer("HSH") || prefer("REF") || candidates.find((x) => String(x.GoldType).trim().toUpperCase() !== "JEWEL");
 
   if (!item) {
-    // แนะนำให้ log data ครั้งแรกเพื่อดูค่า GoldType/GoldCode แล้วล็อก filter ให้ชัวร์
-    throw new Error("Cannot find 96.5 gold bar item in HSH response");
+    throw new Error("Cannot find GoldCode=96.50 in HSH XML response");
   }
 
-  return {
-    buy: toNumber(item.Buy),
-    sell: toNumber(item.Sell),
-    fetchedAt: item.TimeUpdate ? new Date(item.TimeUpdate).toISOString() : new Date().toISOString(),
-    raw: { GoldType: item.GoldType, GoldCode: item.GoldCode, StrTimeUpdate: item.StrTimeUpdate }
-  };
-}
+  const buy = toNumber(item.Buy);
+  const sell = toNumber(item.Sell);
+  const fetchedAt = item.TimeUpdate ? new Date(item.TimeUpdate).toISOString() : new Date().toISOString();
 
-// // แหล่งข้อมูล: classic.goldtraders.or.th แสดงราคาทองตามประกาศ
-
-export async function fetchThaiGoldBar965() {
-  const URL = "https://classic.goldtraders.or.th/";
-
-  const { data: html } = await axios.get(URL, { timeout: 15000 });
-  const $ = cheerio.load(html);
-
-  // หน้า classic มีข้อความแนวนี้:
-  // "ทองคำแท่ง 96.5%  ขายออก  78,750.00  รับซื้อ  78,550.00"
-  const text = $.text().replace(/\s+/g, " ");
-
-  const m = text.match(
-    /ทองคำแท่ง\s*96\.5%.*?ขายออก\s*([0-9,]+\.[0-9]+).*?รับซื้อ\s*([0-9,]+\.[0-9]+)/i
-  );
-
-  if (!m) {
-    throw new Error("Cannot parse gold bar 96.5% price from GTA classic page.");
+  if (!Number.isFinite(buy) || !Number.isFinite(sell)) {
+    throw new Error("HSH matched item but Buy/Sell invalid");
   }
 
-  const sell = parseNumber(m[1]);
-  const buy = parseNumber(m[2]);
-
-  // เวลาอัปเดต (ถ้าอยากแยกเพิ่มทีหลังค่อย parse)
-  return {
-    source: URL,
-    buy,
-    sell,
-    fetchedAt: new Date().toISOString()
-  };
+  return { buy, sell, fetchedAt, source: "HSH", raw: { GoldCode: item.GoldCode, GoldType: item.GoldType } };
 }
