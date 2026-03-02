@@ -1,4 +1,5 @@
 import axios from "axios";
+import * as cheerio from "cheerio";
 
 function toNumber(v) {
   // API บางทีส่งเป็น string เช่น "79,550" หรือ "79550"
@@ -38,10 +39,6 @@ export async function fetchHSHGoldBar965() {
     raw: { GoldType: item.GoldType, GoldCode: item.GoldCode, StrTimeUpdate: item.StrTimeUpdate }
   };
 }
-
-
-// import axios from "axios";
-// import * as cheerio from "cheerio";
 
 // // แหล่งข้อมูล: classic.goldtraders.or.th แสดงราคาทองตามประกาศ
 

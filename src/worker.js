@@ -1,5 +1,6 @@
+// src/worker.js
 import "dotenv/config";
-import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js"; // หรือ HSH
+import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js"; // ถ้าใช้ HSH ให้เปลี่ยน import/เรียกฟังก์ชันตรงนี้
 import {
   insertPrice,
   getLastTwoSells,
@@ -15,8 +16,8 @@ function fmt(n) {
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: 2 }).format(n);
 }
 
-function calcPnL(currentSellPerBaht) {
-  const p = getPortfolio(); // { grams, avg_cost_per_gram, realized_pnl }
+async function calcPnL(currentSellPerBaht) {
+  const p = await getPortfolio(); // ✅ await
   const grams = Number(p.grams);
   const avg = Number(p.avg_cost_per_gram);
   const realized = Number(p.realized_pnl);
@@ -28,24 +29,24 @@ function calcPnL(currentSellPerBaht) {
   return { grams, avg, realized, unrealized, total, sellPerGram, avgPerBaht: avg * BAHT_GOLD_GRAMS };
 }
 
-function diffAlert(currSell, prevSell) {
+async function diffAlert(currSell, prevSell) {
   const diff100 = Number(process.env.ALERT_DIFF_100 || 100);
   const diff200 = Number(process.env.ALERT_DIFF_200 || 200);
 
   const diff = currSell - prevSell;
   const abs = Math.abs(diff);
 
-  const lastLevel = Number(getAlertState("last_diff_level", "0"));
+  const lastLevel = Number(await getAlertState("last_diff_level", "0"));
   let level = 0;
   if (abs >= diff200) level = 200;
   else if (abs >= diff100) level = 100;
 
   if (level === 0 && lastLevel !== 0) {
-    setAlertState("last_diff_level", "0");
+    await setAlertState("last_diff_level", "0");
     return null;
   }
   if (level > lastLevel) {
-    setAlertState("last_diff_level", String(level));
+    await setAlertState("last_diff_level", String(level));
     const dir = diff > 0 ? "ขึ้น" : "ลง";
     const emoji = diff > 0 ? "📈" : "📉";
     return `${emoji} ราคา${dir} ${fmt(abs)} บาท (จาก ${fmt(prevSell)} → ${fmt(currSell)})`;
@@ -53,79 +54,78 @@ function diffAlert(currSell, prevSell) {
   return null;
 }
 
-function shouldSendReport({ currSell, totalPnL }) {
-  // กันสแปม: ส่งเมื่อ "ราคาเปลี่ยน" หรือ "กำไรเปลี่ยน" มากพอ
-  const priceStep = Number(process.env.REPORT_PRICE_STEP || 100); // บาท
-  const pnlStep = Number(process.env.REPORT_PNL_STEP || 500);     // บาท
+async function shouldSendReport({ currSell, totalPnL }) {
+  const priceStep = Number(process.env.REPORT_PRICE_STEP || 100);
+  const pnlStep = Number(process.env.REPORT_PNL_STEP || 500);
 
-  const lastSell = Number(getAlertState("last_report_sell", "0"));
-  const lastPnl = Number(getAlertState("last_report_total", "0"));
+  const lastSell = Number(await getAlertState("last_report_sell", "0"));
+  const lastPnl = Number(await getAlertState("last_report_total", "0"));
 
   const priceChanged = Math.abs(currSell - lastSell) >= priceStep;
   const pnlChanged = Math.abs(totalPnL - lastPnl) >= pnlStep;
 
   if (priceChanged || pnlChanged) {
-    setAlertState("last_report_sell", String(currSell));
-    setAlertState("last_report_total", String(totalPnL));
+    await setAlertState("last_report_sell", String(currSell));
+    await setAlertState("last_report_total", String(totalPnL));
     return true;
   }
   return false;
 }
 
-function milestoneAlerts(totalPnL) {
-  // แจ้ง milestone แบบครั้งเดียวเมื่อข้ามระดับ
+async function milestoneAlerts(totalPnL) {
   const milestones = (process.env.PNL_MILESTONES || "10000,20000,50000")
     .split(",")
     .map(x => Number(x.trim()))
     .filter(Boolean)
     .sort((a, b) => a - b);
 
-  const lastMilestone = Number(getAlertState("last_pnl_milestone", "0"));
+  const lastMilestone = Number(await getAlertState("last_pnl_milestone", "0"));
   for (const m of milestones) {
     if (totalPnL >= m && lastMilestone < m) {
-      setAlertState("last_pnl_milestone", String(m));
+      await setAlertState("last_pnl_milestone", String(m));
       return `🏁 Total PnL ทะลุ ${fmt(m)} บาท (ตอนนี้ ${fmt(totalPnL)})`;
     }
   }
 
-  // แจ้งเมื่อจากบวก -> ติดลบ
-  const lastSign = getAlertState("last_pnl_sign", "unknown");
+  const lastSign = await getAlertState("last_pnl_sign", "unknown");
   const signNow = totalPnL >= 0 ? "pos" : "neg";
   if (lastSign !== "unknown" && lastSign !== signNow) {
-    setAlertState("last_pnl_sign", signNow);
+    await setAlertState("last_pnl_sign", signNow);
     return signNow === "neg"
       ? `🔴 Total PnL กลับมาติดลบ (${fmt(totalPnL)})`
       : `🟢 Total PnL กลับมาเป็นบวก (${fmt(totalPnL)})`;
   }
-  setAlertState("last_pnl_sign", signNow);
+  await setAlertState("last_pnl_sign", signNow);
 
   return null;
 }
 
 export async function runOnce() {
+  // ✅ fetch ราคา (ตอนนี้ใช้ GTA)
   const price = await fetchHSHGoldBar965(); // { buy, sell, fetchedAt }
 
-  insertPrice({ ts: price.fetchedAt, buy: price.buy, sell: price.sell });
+  await insertPrice({ ts: price.fetchedAt, buy: price.buy, sell: price.sell });
 
-  const pnl = calcPnL(price.sell);
-  const userIds = listUserIds();
+  const pnl = await calcPnL(price.sell);
+
+  const userIds = await listUserIds();
   if (!userIds.length) return;
 
   const signals = [];
 
   // 1) diff alert ±100/±200
-  const two = getLastTwoSells();
+  const two = await getLastTwoSells();
   if (two) {
-    const s = diffAlert(two.currSell, two.prevSell);
+    const s = await diffAlert(two.currSell, two.prevSell);
     if (s) signals.push(s);
   }
 
   // 2) PnL milestone/sign alerts
-  const m = milestoneAlerts(pnl.total);
+  const m = await milestoneAlerts(pnl.total);
   if (m) signals.push(m);
 
   // 3) รายงานพอร์ต (ส่งเมื่อเปลี่ยนเยอะพอ)
-  const sendReport = shouldSendReport({ currSell: price.sell, totalPnL: pnl.total });
+  const sendReport = await shouldSendReport({ currSell: price.sell, totalPnL: pnl.total });
 
   if (!sendReport && signals.length === 0) return;
 

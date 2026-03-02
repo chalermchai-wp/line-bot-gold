@@ -3,21 +3,23 @@ import express from "express";
 import cron from "node-cron";
 import { webhookApp } from "./webhook.js";
 import { runOnce } from "./worker.js";
+import { initDb } from "./db.js";
 
 const app = express();
 app.use(webhookApp);
 
-app.get("/", (_, res) => res.send("gold-bot ok"));
+app.get("/", (_, res) => res.send("gold-bot running"));
 
 const port = Number(process.env.PORT || 3000);
+
+await initDb();
+
 app.listen(port, () => console.log(`Listening on :${port}`));
 
-const spec = process.env.CRON || "*/5 * * * *";
-cron.schedule(spec, async () => {
+cron.schedule(process.env.CRON || "*/15 * * * *", async () => {
   try {
-    const r = await runOnce();
-    console.log("tick", r.sell, r.signalsCount);
+    await runOnce();
   } catch (e) {
-    console.error("tick error", e);
+    console.error(e);
   }
 });
