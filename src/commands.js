@@ -1,20 +1,22 @@
 import { BAHT_GOLD_GRAMS, getPortfolio, savePortfolio, insertTrade } from "./db.js";
 
 function parseQty(qtyStr) {
-  // "5g" => { grams:5, amountTHB:0 }
-  // "10000" => { grams:null, amountTHB:10000 }
   const s = String(qtyStr).trim().toLowerCase();
-  if (s.endsWith("g")) {
-    return { grams: Number(s.slice(0, -1)), amountTHB: 0 };
-  }
+  if (s.endsWith("g")) return { grams: Number(s.slice(0, -1)), amountTHB: null };
   return { grams: null, amountTHB: Number(s) };
 }
 
 function toNumber(x) {
-  return Number(String(x).replace(/,/g, "").trim());
+  const n = Number(String(x ?? "").replace(/,/g, "").trim());
+  return Number.isFinite(n) ? n : NaN;
 }
 
-export function handleCommand(text, currentSellPerBaht /* number */) {
+function ensureFinite(n, label) {
+  if (!Number.isFinite(n)) throw new Error(`Invalid ${label}: ${n}`);
+  return n;
+}
+
+export async function handleCommand(text, currentSellPerBaht /* number */) {
   const t = String(text || "").trim();
   if (!t) return null;
 
@@ -22,7 +24,7 @@ export function handleCommand(text, currentSellPerBaht /* number */) {
   const cmd = (parts[0] || "").toLowerCase();
 
   if (cmd === "status") {
-    return buildStatus(currentSellPerBaht);
+    return await buildStatus(currentSellPerBaht);
   }
 
   if (cmd !== "buy" && cmd !== "sell") return null;
@@ -30,40 +32,58 @@ export function handleCommand(text, currentSellPerBaht /* number */) {
   const pricePerBaht = toNumber(parts[1]);
   const qty = parts[2];
 
-  if (!pricePerBaht || !qty) {
+  if (!Number.isFinite(pricePerBaht) || pricePerBaht <= 0 || !qty) {
     return "รูปแบบไม่ถูกต้อง\nตัวอย่าง:\nbuy 77500 10000\nbuy 77500 5g\nsell 78900 5000\nsell 78900 2g\nstatus";
   }
 
   const pricePerGram = pricePerBaht / BAHT_GOLD_GRAMS;
+  if (!Number.isFinite(pricePerGram) || pricePerGram <= 0) {
+    return "❌ ราคาไม่ถูกต้อง (คำนวณราคา/กรัมไม่ได้)";
+  }
+
   const { grams, amountTHB } = parseQty(qty);
 
-  const portfolio = getPortfolio();
+  const portfolio = await getPortfolio(); // ✅ await
   const oldGrams = Number(portfolio.grams);
   const oldAvg = Number(portfolio.avg_cost_per_gram);
   const oldRealized = Number(portfolio.realized_pnl);
 
+  if (!Number.isFinite(oldGrams) || !Number.isFinite(oldAvg) || !Number.isFinite(oldRealized)) {
+    return "❌ อ่านพอร์ตจาก DB ไม่สำเร็จ (ค่าไม่ถูกต้อง)";
+  }
+
   let tradeGrams = grams;
   let tradeAmount = amountTHB;
 
-  // ถ้าระบุเป็นเงิน -> แปลงเป็นกรัม
+  // ระบุเป็นเงิน -> แปลงเป็นกรัม
   if (tradeGrams == null) {
-    if (!tradeAmount || tradeAmount <= 0) return "จำนวนเงินต้องมากกว่า 0";
+    if (!Number.isFinite(tradeAmount) || tradeAmount <= 0) return "จำนวนเงินต้องมากกว่า 0";
     tradeGrams = tradeAmount / pricePerGram;
   } else {
-    if (!tradeGrams || tradeGrams <= 0) return "จำนวนกรัมต้องมากกว่า 0";
-    // ถ้าระบุเป็นกรัม -> คำนวณเงินคร่าว ๆ
+    if (!Number.isFinite(tradeGrams) || tradeGrams <= 0) return "จำนวนกรัมต้องมากกว่า 0";
     tradeAmount = tradeGrams * pricePerGram;
   }
+
+  if (!Number.isFinite(tradeGrams) || tradeGrams <= 0) return "❌ จำนวนซื้อ/ขายไม่ถูกต้อง";
+  if (!Number.isFinite(tradeAmount) || tradeAmount <= 0) return "❌ มูลค่าซื้อ/ขายไม่ถูกต้อง";
 
   if (cmd === "buy") {
     const newGrams = oldGrams + tradeGrams;
     const newAvg =
       newGrams === 0 ? 0 : (oldAvg * oldGrams + pricePerGram * tradeGrams) / newGrams;
 
-    savePortfolio({ grams: newGrams, avg_cost_per_gram: newAvg, realized_pnl: oldRealized });
-    insertTrade({ side: "BUY", pricePerBaht, pricePerGram, amountTHB: tradeAmount, grams: tradeGrams });
+    // ✅ กัน NaN ก่อนเขียน DB
+    ensureFinite(newGrams, "newGrams");
+    ensureFinite(newAvg, "newAvg");
+    ensureFinite(oldRealized, "oldRealized");
 
-    return buildStatus(currentSellPerBaht, `✅ BUY บันทึกแล้ว: ~${tradeAmount.toFixed(2)} บาท ได้ ${tradeGrams.toFixed(4)}g @ ${pricePerBaht}`);
+    await savePortfolio({ grams: newGrams, avg_cost_per_gram: newAvg, realized_pnl: oldRealized }); // ✅ await
+    await insertTrade({ side: "BUY", pricePerBaht, pricePerGram, amountTHB: tradeAmount, grams: tradeGrams }); // ✅ await
+
+    return await buildStatus(
+      currentSellPerBaht,
+      `✅ BUY บันทึกแล้ว: ~${tradeAmount.toFixed(2)} บาท ได้ ${tradeGrams.toFixed(4)}g @ ${pricePerBaht}`
+    );
   }
 
   // SELL
@@ -75,20 +95,31 @@ export function handleCommand(text, currentSellPerBaht /* number */) {
   const newRealized = oldRealized + realizedThis;
   const newGrams = oldGrams - tradeGrams;
 
-  savePortfolio({ grams: newGrams, avg_cost_per_gram: oldAvg, realized_pnl: newRealized });
-  insertTrade({ side: "SELL", pricePerBaht, pricePerGram, amountTHB: tradeAmount, grams: tradeGrams });
+  // ถ้าขายหมด ให้ reset avg เป็น 0 กันค้างค่าเก่า
+  const newAvg = newGrams === 0 ? 0 : oldAvg;
 
-  return buildStatus(
+  ensureFinite(newGrams, "newGrams");
+  ensureFinite(newAvg, "newAvg");
+  ensureFinite(newRealized, "newRealized");
+
+  await savePortfolio({ grams: newGrams, avg_cost_per_gram: newAvg, realized_pnl: newRealized }); // ✅ await
+  await insertTrade({ side: "SELL", pricePerBaht, pricePerGram, amountTHB: tradeAmount, grams: tradeGrams }); // ✅ await
+
+  return await buildStatus(
     currentSellPerBaht,
     `✅ SELL บันทึกแล้ว: ${tradeGrams.toFixed(4)}g @ ${pricePerBaht}\nRealized รอบนี้: ${realizedThis.toFixed(2)} บาท`
   );
 }
 
-export function buildStatus(currentSellPerBaht, headerNote = "") {
-  const p = getPortfolio();
+export async function buildStatus(currentSellPerBaht, headerNote = "") {
+  const p = await getPortfolio(); // ✅ await
   const grams = Number(p.grams);
   const avg = Number(p.avg_cost_per_gram);
   const realized = Number(p.realized_pnl);
+
+  if (!Number.isFinite(currentSellPerBaht) || currentSellPerBaht <= 0) {
+    return "❌ ราคาปัจจุบันไม่ถูกต้อง";
+  }
 
   const sellPerGram = currentSellPerBaht / BAHT_GOLD_GRAMS;
   const unrealized = (sellPerGram - avg) * grams;

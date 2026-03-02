@@ -181,7 +181,19 @@ export async function getPortfolio() {
   }
 }
 
+function ensureNumber(n, name) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) {
+    throw new Error(`Invalid number for ${name}: ${n}`);
+  }
+  return v;
+}
+
 export async function savePortfolio({ grams, avg_cost_per_gram, realized_pnl }) {
+  const g = ensureNumber(grams, "grams");
+  const avg = ensureNumber(avg_cost_per_gram, "avg_cost_per_gram");
+  const r = ensureNumber(realized_pnl, "realized_pnl");
+
   let conn;
   try {
     conn = await pool.getConnection();
@@ -189,7 +201,7 @@ export async function savePortfolio({ grams, avg_cost_per_gram, realized_pnl }) 
       `UPDATE portfolio
        SET grams=?, avg_cost_per_gram=?, realized_pnl=?, updated_at=NOW(3)
        WHERE id=1`,
-      [grams, avg_cost_per_gram, realized_pnl]
+      [g, avg, r]
     );
   } finally {
     if (conn) conn.release();
