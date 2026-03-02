@@ -1,6 +1,7 @@
 // src/worker.js
 import "dotenv/config";
-import { fetchThaiGoldBar965 } from "./fetchGoldGTA.js";
+// import { fetchThaiGoldBar965 } from "./fetchGoldGTA.js";
+import { fetchHSHGoldBar965 } from "./fetchGoldHSH.js";
 import {
   insertPrice,
   getLastNCloses,
@@ -17,7 +18,7 @@ function fmt(n) {
 }
 
 export async function runOnce() {
-  const p = await fetchThaiGoldBar965();
+  const p = await fetchHSHGoldBar965();
 
   insertPrice({ ts: p.fetchedAt, buy: p.buy, sell: p.sell });
 
