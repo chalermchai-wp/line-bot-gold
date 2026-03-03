@@ -153,34 +153,64 @@ export async function tvScan(symbolKey) {
  * ดึงแท่งเทียน (history) เพื่อคำนวณ EMA/RSI + D1 high/low
  * ใช้ UDF history endpoint (unofficial) — ใส่ headers ให้คล้าย browser
  */
-export async function tvHistory(symbol, resolution = "D", bars = 120) {
-  const nowSec = Math.floor(Date.now() / 1000);
-  const fromSec = nowSec - bars * 86400;
 
-  // UDF history endpoint
-  const url = "https://www.tradingview.com/charting_library/datafeed/udf/history";
+export async function tvHistory(symbol, resolution = "D", bars = 200) {
 
-  const res = await axios.get(url, {
-    headers: TV_HEADERS,
-    timeout: 20000,
-    params: {
-      symbol,
-      resolution,
-      from: fromSec,
-      to: nowSec,
-    },
-    validateStatus: () => true,
-  });
+  const now = Math.floor(Date.now() / 1000);
+  const from = now - bars * 86400;
 
-  if (res.status < 200 || res.status >= 300) {
-    throw new Error(`TV history HTTP ${res.status}`);
-  }
+  const url = "https://tvc4.investing.com/history";
+
+  const res = await axios.get(
+    `https://www.tradingview.com/charting_library/datafeed/udf/history`,
+    {
+      headers: TV_HEADERS,
+      params: {
+        symbol,
+        resolution,
+        from,
+        to: now
+      }
+    }
+  );
+
   const data = res.data;
 
   if (data?.s !== "ok") {
-    throw new Error(`TV history not ok for ${symbol}: ${JSON.stringify(data)?.slice?.(0, 200)}`);
+    throw new Error("TV history failed");
   }
 
-  // data: { t:[], o:[], h:[], l:[], c:[], v:[] }
   return data;
 }
+
+// export async function tvHistory(symbol, resolution = "D", bars = 120) {
+//   const nowSec = Math.floor(Date.now() / 1000);
+//   const fromSec = nowSec - bars * 86400;
+
+//   // UDF history endpoint
+//   const url = "https://www.tradingview.com/charting_library/datafeed/udf/history";
+
+//   const res = await axios.get(url, {
+//     headers: TV_HEADERS,
+//     timeout: 20000,
+//     params: {
+//       symbol,
+//       resolution,
+//       from: fromSec,
+//       to: nowSec,
+//     },
+//     validateStatus: () => true,
+//   });
+
+//   if (res.status < 200 || res.status >= 300) {
+//     throw new Error(`TV history HTTP ${res.status}`);
+//   }
+//   const data = res.data;
+
+//   if (data?.s !== "ok") {
+//     throw new Error(`TV history not ok for ${symbol}: ${JSON.stringify(data)?.slice?.(0, 200)}`);
+//   }
+
+//   // data: { t:[], o:[], h:[], l:[], c:[], v:[] }
+//   return data;
+// }
