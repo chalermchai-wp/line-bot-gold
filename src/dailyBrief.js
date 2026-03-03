@@ -193,7 +193,6 @@ export async function runDailyBrief(nowThaiStr = "") {
   lines.push("");
 
   lines.push(`🧭 แนวรับ/แนวต้าน (D1): S ${support ? fmt(support,2) : "-"} | R ${resistance ? fmt(resistance,2) : "-"}`);
-  lines.push(`📊 EMA20: ${ema20 ? fmt(ema20,2) : "-"} | EMA50: ${ema50 ? fmt(ema50,2) : "-"} | RSI14: ${Number.isFinite(rsi14) ? fmt(rsi14,0) : "-"}`);
   lines.push("");
   lines.push(`เหตุผลหลัก: ${parts.slice(0, 5).join(" • ")}`);
 
