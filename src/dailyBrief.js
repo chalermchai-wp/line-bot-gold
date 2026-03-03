@@ -128,10 +128,6 @@ export async function runDailyBrief(nowThaiStr = "") {
     tvScan("SPX")
   ]);
 
-  const trend = detectTrend(xau.close, ema20, ema50);
-  const buyZone = detectBuyZone(xau.close, support, rsi14);
-
-
   // 3) Try compute EMA/RSI from last ~120 daily closes
   let ema20 = null, ema50 = null, rsi14 = null;
   let support = null, resistance = null;
@@ -160,6 +156,9 @@ export async function runDailyBrief(nowThaiStr = "") {
     resistance = Number.isFinite(xau.high) ? xau.high : null;
   
   }
+
+  const trend = detectTrend(xau.close, ema20, ema50);
+  const buyZone = detectBuyZone(xau.close, support, rsi14);
 
   const ctx = { xau, dxy, us10y, usdthb, spx, ema20, ema50, rsi14, support, resistance };
   const { score: rawScore, parts } = buildScoreParts(ctx);
