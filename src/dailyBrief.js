@@ -113,9 +113,6 @@ export async function runDailyBrief(nowThaiStr = "") {
   const buy = thai?.buyPrice ?? null;
   const sell = thai?.sellPrice ?? null;
   
-  const trend = detectTrend(xau.close, ema20, ema50);
-  const buyZone = detectBuyZone(xau.close, support, rsi14);
-
   // 2) TradingView quotes (symbols configurable)
   const SYM_XAU = process.env.TV_XAUUSD || "OANDA:XAUUSD";
   const SYM_DXY = process.env.TV_DXY || "TVC:DXY";
@@ -130,6 +127,10 @@ export async function runDailyBrief(nowThaiStr = "") {
     tvScan("USDTHB"),
     tvScan("SPX")
   ]);
+
+  const trend = detectTrend(xau.close, ema20, ema50);
+  const buyZone = detectBuyZone(xau.close, support, rsi14);
+
 
   // 3) Try compute EMA/RSI from last ~120 daily closes
   let ema20 = null, ema50 = null, rsi14 = null;
