@@ -124,6 +124,147 @@ function smartBuyZoneNoRSI({ price, support, xauChangePct, dxyChangePct, us10yCh
   return { label: "Wait ⏳", zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}` };
 }
 
+function detectLiquidity(price, support) {
+
+  if (!Number.isFinite(price) || !Number.isFinite(support))
+    return null;
+
+  const dist = (price - support) / support;
+
+  if (dist < 0.01 && dist > 0)
+    return `Liquidity below ${fmt(support,0)}`;
+
+  if (price < support)
+    return `Stops swept below ${fmt(support,0)}`;
+
+  return null;
+}
+
+function detectCrashRisk(ctx) {
+
+  const { xau, dxy, us10y } = ctx;
+
+  if (
+    xau.changePct < -2 &&
+    dxy.changePct > 0.3 &&
+    us10y.changePct > 0.3
+  ) {
+    return "⚠️ Crash Risk High";
+  }
+
+  if (
+    xau.changePct < -1 &&
+    dxy.changePct > 0
+  ) {
+    return "⚠️ Downside Pressure";
+  }
+
+  return null;
+}
+
+function calcBuyProbability(ctx) {
+
+  let score = 50;
+
+  if (ctx.xau.changePct < -2)
+    score += 10;
+
+  if (ctx.xau.changePct > 1)
+    score -= 10;
+
+  if (ctx.dxy.changePct > 0)
+    score -= 10;
+
+  if (ctx.us10y.changePct > 0)
+    score -= 8;
+
+  if (ctx.spx.changePct < 0)
+    score += 5;
+
+  if (ctx.usdthb.changePct > 0)
+    score += 5;
+
+  return Math.max(5, Math.min(95, Math.round(score)));
+}
+
+function smartMoneySignal(ctx) {
+  const { xau, dxy, us10y, spx, support, resistance } = ctx;
+
+  // fallback
+  if (!Number.isFinite(xau?.close) || !Number.isFinite(support) || !Number.isFinite(resistance) || resistance === support) {
+    return { label: "-", note: "-" };
+  }
+
+  const price = xau.close;
+  const pos = (price - support) / (resistance - support); // 0..1
+
+  const goldDump = Number.isFinite(xau.changePct) && xau.changePct <= -2.0;
+  const dollarUp = Number.isFinite(dxy.changePct) && dxy.changePct > 0.3;
+  const yieldUp = Number.isFinite(us10y.changePct) && us10y.changePct > 0.3;
+  const riskOff = Number.isFinite(spx.changePct) && spx.changePct < -0.5;
+
+  // 1) Panic sell (เทขายหนัก)
+  if (goldDump && (dollarUp || yieldUp)) {
+    return { label: "Panic Sell 🔻", note: "ทองลงแรง + แรงกดจาก USD/ยีลด์" };
+  }
+
+  // 2) Accumulation ใกล้แนวรับ (เริ่มสะสม)
+  if (pos <= 0.25 && riskOff && !dollarUp) {
+    return { label: "Accumulation 🟢", note: "อ่อนใกล้แนวรับ + risk-off แต่ USD ไม่กดเพิ่ม" };
+  }
+
+  // 3) Distribution ใกล้แนวต้าน (ทยอยขาย)
+  if (pos >= 0.75 && Number.isFinite(xau.changePct) && xau.changePct > 0 && (dollarUp || yieldUp)) {
+    return { label: "Distribution 🟠", note: "เด้งใกล้แนวต้านแต่ USD/ยีลด์กด อาจมีขายทำกำไร" };
+  }
+
+  // 4) Range / Neutral
+  if (pos > 0.25 && pos < 0.75) {
+    return { label: "Range Trading ↔", note: "แกว่งในกรอบ S/R" };
+  }
+
+  return { label: "Mixed / Unclear ❔", note: "สัญญาณผสม" };
+}
+
+function autoTradingSignal(ctx) {
+  const { xau, support, resistance, buyProbability, crashRisk } = ctx;
+
+  const price = xau?.close;
+  if (!Number.isFinite(price) || !Number.isFinite(support) || !Number.isFinite(resistance) || resistance === support) {
+    return { action: "WAIT", reason: "ข้อมูลไม่พอ" };
+  }
+
+  const pos = (price - support) / (resistance - support); // 0..1
+  const mom = Number.isFinite(xau.changePct) ? xau.changePct : 0;
+
+  // ถ้ามี crash warning -> หลีกเลี่ยงก่อน
+  if (crashRisk === "⚠️ Crash Risk High") {
+    return { action: "AVOID", reason: "มีสัญญาณ Crash Risk สูง" };
+  }
+
+  // Knife falling -> หลีกเลี่ยงรับมีด
+  if (mom <= -3.0) {
+    return { action: "AVOID", reason: "ราคาลงแรง (knife falling) รอเด้งก่อน" };
+  }
+
+  // BUY: ใกล้แนวรับ + buyProbability สูงพอ + ไม่อยู่ใกล้แนวต้าน
+  if (pos <= 0.25 && buyProbability >= 60) {
+    return { action: "BUY", reason: "ใกล้แนวรับ + โอกาสรีบาวด์สูง" };
+  }
+
+  // WAIT: ใกล้แนวรับแต่ความน่าจะเป็นยังกลางๆ
+  if (pos <= 0.25 && buyProbability >= 40) {
+    return { action: "WAIT", reason: "ใกล้แนวรับ แต่ยังต้องรอคอนเฟิร์ม" };
+  }
+
+  // AVOID: ใกล้แนวต้านและโอกาสซื้อไม่สูง
+  if (pos >= 0.75 && buyProbability < 55) {
+    return { action: "AVOID", reason: "ใกล้แนวต้าน โอกาสเสี่ยงย่อ" };
+  }
+
+  return { action: "WAIT", reason: "อยู่กลางกรอบ/สัญญาณยังไม่ชัด" };
+}
+
 export async function runDailyBrief(nowThaiStr = "") {
   // 1) Thai gold price
   const thai = await fetchHSHGoldBar965();
@@ -172,6 +313,17 @@ export async function runDailyBrief(nowThaiStr = "") {
     us10yChangePct: us10y.changePct,
   });
 
+  const liquidity = detectLiquidity(xau.close, support);
+
+  const crashRisk = detectCrashRisk(ctx);
+
+  const buyProbability = calcBuyProbability(ctx);
+
+  const ctx2 = { ...ctx, buyProbability, crashRisk };
+
+  const sm = smartMoneySignal(ctx2);
+  const trade = autoTradingSignal(ctx2);
+
   // 4) News
   const news = await fetchRssTopItems(2);
 
@@ -184,6 +336,18 @@ export async function runDailyBrief(nowThaiStr = "") {
   lines.push(`🌍 XAUUSD: ${fmt(xau.close,2)} (${fmt(xau.changePct,2)}%)`);
   lines.push(`💵 DXY: ${fmt(dxy.close,2)} (${fmt(dxy.changePct,2)}%) | 🏦 US10Y: ${fmt(us10y.close,3)} (${fmt(us10y.changePct,2)}%)`);
   lines.push(`💱 USDTHB: ${fmt(usdthb.close,3)} (${fmt(usdthb.changePct,2)}%) | 📈 SPX: ${fmt(spx.close,2)} (${fmt(spx.changePct,2)}%)`);
+  lines.push("");
+
+  lines.push(`🤖 Buy Probability: ${buyProbability}%`);
+  if (liquidity)
+  lines.push(`💧 ${liquidity}`);
+  if (crashRisk)
+  lines.push(crashRisk);
+
+  lines.push(`🧠 Smart Money: ${sm.label}`);
+  lines.push(`   มุมมอง: ${sm.note}`);
+  
+  lines.push(`📌 Action: ${trade.action} | เหตุผล: ${trade.reason}`);
   lines.push("");
 
   const trend = trendFromSR(xau.close, support, resistance);
