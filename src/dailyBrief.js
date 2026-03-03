@@ -257,7 +257,8 @@ export async function runDailyBrief(nowThaiStr = "") {
   const signal = scoreToSignal(score100);
 
   const fair = calcThaiFairValue(xau.close, usdthb.close);
-  const premium = calcPremium(sell ?? NaN, fair ?? NaN);
+  const thaiPrice = sell ?? buy ?? null;
+  const premium = calcPremium(thaiPrice, fair ?? NaN);
 
   const buyInfo = smartBuyZone({
     price: xau.close,
@@ -277,7 +278,9 @@ export async function runDailyBrief(nowThaiStr = "") {
   lines.push(`สัญญาณ: ${signal} | คะแนน: ${score100}/100`);
   lines.push("");
   lines.push(`🇹🇭 ทองไทย 96.5%: รับซื้อ ${buy ? fmt(buy,0) : "-"} | ขายออก ${sell ? fmt(sell,0) : "-"}`);
-  lines.push(`🧮 Fair Value ทองไทย: ${fair ? fmt(fair,0) : "-"} | Premium: ${premium!=null ? fmt(premium,0) : "-"} (${premiumLabel(premium)})`);
+  lines.push(
+    `🧮 Fair Value ทองไทย: ${fair ? fmt(fair,0) : "-"} | Premium: ${premium!=null ? fmt(premium,0) : "-"}`
+    );
   lines.push(`🌍 XAUUSD: ${fmt(xau.close,2)} (${fmt(xau.changePct,2)}%)`);
   lines.push(`💵 DXY: ${fmt(dxy.close,2)} (${fmt(dxy.changePct,2)}%) | 🏦 US10Y: ${fmt(us10y.close,3)} (${fmt(us10y.changePct,2)}%)`);
   lines.push(`💱 USDTHB: ${fmt(usdthb.close,3)} (${fmt(usdthb.changePct,2)}%) | 📈 SPX: ${fmt(spx.close,2)} (${fmt(spx.changePct,2)}%)`);
