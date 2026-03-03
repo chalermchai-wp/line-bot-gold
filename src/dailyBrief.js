@@ -6,14 +6,6 @@ import { ema, rsi } from "./indicators.js";
 import { tvScan } from "./services/tradingview.js";
 import { fetchRssTopItems } from "./services/rss.js";
 
-function trendFromSR(price, support, resistance) {
-  if (!Number.isFinite(price) || !Number.isFinite(support) || !Number.isFinite(resistance) || resistance === support) return "-";
-  const pos = (price - support) / (resistance - support); // 0..1
-  if (pos >= 0.7) return "แข็งแถวแนวต้าน ↗";
-  if (pos <= 0.3) return "อ่อนแถวแนวรับ ↘";
-  return "แกว่งกลางกรอบ ↔";
-}
-
 function fmt(n, digits = 2) {
   if (!Number.isFinite(n)) return "-";
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: digits }).format(n);
