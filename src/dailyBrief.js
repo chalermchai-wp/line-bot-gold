@@ -85,11 +85,11 @@ export async function runDailyBrief(nowThaiStr = "") {
   const SYM_SPX = process.env.TV_SPX || "SP:SPX";
 
   const [xau, dxy, us10y, usdthb, spx] = await Promise.all([
-    tvScan(SYM_XAU),
-    tvScan(SYM_DXY),
-    tvScan(SYM_US10Y),
-    tvScan(SYM_USDTHB),
-    tvScan(SYM_SPX),
+    tvScan("XAUUSD"),
+    tvScan("DXY"),
+    tvScan("US10Y"),
+    tvScan("USDTHB"),
+    tvScan("SPX")
   ]);
 
   // 3) Try compute EMA/RSI from last ~120 daily closes
@@ -98,8 +98,9 @@ export async function runDailyBrief(nowThaiStr = "") {
 
   try {
     const nowSec = Math.floor(Date.now() / 1000);
-    const fromSec = nowSec - 200 * 24 * 3600; // ~200 days back
-    const hist = await tvHistory(SYM_XAU, "D", fromSec, nowSec);
+    // const fromSec = nowSec - 200 * 24 * 3600; // ~200 days back
+    const hist = await tvHistory(SYM_XAU, "D", 200);
+    // const hist = await tvHistory(SYM_XAU, "D", fromSec, nowSec);
     const closes = (hist.c || []).map(Number).filter(Number.isFinite);
     const highs = (hist.h || []).map(Number).filter(Number.isFinite);
     const lows = (hist.l || []).map(Number).filter(Number.isFinite);

@@ -1,5 +1,13 @@
 import axios from "axios";
 
+const FALLBACK_SYMBOLS = {
+  XAUUSD: ["OANDA:XAUUSD", "FX_IDC:XAUUSD", "TVC:GOLD"],
+  DXY: ["TVC:DXY"],
+  US10Y: ["TVC:US10Y"],
+  USDTHB: ["FX_IDC:USDTHB"],
+  SPX: ["SP:SPX", "CBOE:SPX"]
+};
+
 const TV_HEADERS = {
   "User-Agent":
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
@@ -55,42 +63,90 @@ async function postScan(url, payload) {
 /**
  * ดึง quote แบบเร็ว (close + %change 1D + high/low 1D ถ้ามี)
  */
-export async function tvScan(symbol) {
-  const payload = {
-    symbols: { tickers: [symbol] },
-    columns: ["close", "change", "change_abs", "high", "low", "description"],
-  };
+// export async function tvScan(symbol) {
+//   const payload = {
+//     symbols: { tickers: [symbol] },
+//     columns: ["close", "change", "change_abs", "high", "low", "description"],
+//   };
 
-  const endpoints = scanEndpointsFor(symbol);
-  let lastErr = null;
+//   const endpoints = scanEndpointsFor(symbol);
+//   let lastErr = null;
 
-  for (const url of endpoints) {
-    try {
-      const data = await postScan(url, payload);
-      const row = data?.data?.[0];
+//   for (const url of endpoints) {
+//     try {
+//       const data = await postScan(url, payload);
+//       const row = data?.data?.[0];
 
-      if (!row?.d) {
-        lastErr = new Error(`TradingView scan returned no data for ${symbol} via ${url}`);
-        continue;
+//       if (!row?.d) {
+//         lastErr = new Error(`TradingView scan returned no data for ${symbol} via ${url}`);
+//         continue;
+//       }
+
+//       const d = row.d;
+//       return {
+//         symbol,
+//         price: Number(d[0]),
+//         changePct: Number(d[1]),
+//         changeAbs: Number(d[2]),
+//         high: d[3] != null ? Number(d[3]) : null,
+//         low: d[4] != null ? Number(d[4]) : null,
+//         description: d[5] ?? null,
+//         source: url,
+//       };
+//     } catch (e) {
+//       lastErr = e;
+//     }
+//   }
+
+//   throw lastErr ?? new Error(`TradingView scan failed for ${symbol}`);
+// }
+
+export async function tvScan(symbolKey) {
+
+  const symbols = FALLBACK_SYMBOLS[symbolKey] || [symbolKey];
+
+  for (const symbol of symbols) {
+
+    const payload = {
+      symbols: { tickers: [symbol] },
+      columns: ["close", "change", "change_abs", "high", "low", "description"]
+    };
+
+    const endpoints = scanEndpointsFor(symbol);
+
+    for (const url of endpoints) {
+
+      try {
+
+        const data = await postScan(url, payload);
+        const row = data?.data?.[0];
+
+        if (row?.d && row.d.length > 0) {
+
+          const d = row.d;
+
+          return {
+            symbol,
+            close: Number(d[0]),
+            changePct: Number(d[1]),
+            changeAbs: Number(d[2]),
+            high: d[3] != null ? Number(d[3]) : null,
+            low: d[4] != null ? Number(d[4]) : null,
+            description: d[5] ?? null,
+            source: url
+          };
+
+        }
+
+      } catch (err) {
+        // ลอง endpoint ต่อไป
       }
 
-      const d = row.d;
-      return {
-        symbol,
-        price: Number(d[0]),
-        changePct: Number(d[1]),
-        changeAbs: Number(d[2]),
-        high: d[3] != null ? Number(d[3]) : null,
-        low: d[4] != null ? Number(d[4]) : null,
-        description: d[5] ?? null,
-        source: url,
-      };
-    } catch (e) {
-      lastErr = e;
     }
+
   }
 
-  throw lastErr ?? new Error(`TradingView scan failed for ${symbol}`);
+  throw new Error(`TradingView scan returned no data for ${symbolKey}`);
 }
 
 /**
