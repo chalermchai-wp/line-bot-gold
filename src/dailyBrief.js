@@ -13,10 +13,21 @@ function fmt(n, digits = 2) {
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 
-function scoreToSignal(score) {
-  if (score >= 2) return "Bullish";
-  if (score <= -2) return "Bearish";
+function scoreToSignal(score100) {
+  const bull = Number(process.env.SCORE_BULL_THRESHOLD ?? 60);
+  const bear = Number(process.env.SCORE_BEAR_THRESHOLD ?? 40);
+  if (score100 >= bull) return "Bullish";
+  if (score100 <= bear) return "Bearish";
   return "Neutral";
+}
+
+function normalizeScoreTo100(rawScore) {
+  // Default range designed for our scoring weights in buildScoreParts()
+  const min = Number(process.env.SCORE_MIN ?? -4);
+  const max = Number(process.env.SCORE_MAX ?? 4);
+  if (!Number.isFinite(rawScore) || !Number.isFinite(min) || !Number.isFinite(max) || max === min) return 50;
+  const n = (rawScore - min) / (max - min);
+  return Math.round(clamp(n * 100, 0, 100));
 }
 
 function buildScoreParts(ctx) {
@@ -107,15 +118,16 @@ export async function runDailyBrief(nowThaiStr = "") {
   }
 
   const ctx = { xau, dxy, us10y, usdthb, spx, ema20, ema50, rsi14, support, resistance };
-  const { score, parts } = buildScoreParts(ctx);
-  const signal = scoreToSignal(score);
+  const { score: rawScore, parts } = buildScoreParts(ctx);
+  const score100 = normalizeScoreTo100(rawScore);
+  const signal = scoreToSignal(score100);
 
   // 4) News
   const news = await fetchRssTopItems(2);
 
   const lines = [];
   lines.push(`🌅 Gold Brief 06:00 (TH) ${nowThaiStr || ""}`.trim());
-  lines.push(`สัญญาณ: ${signal} | คะแนน: ${score}`);
+  lines.push(`สัญญาณ: ${signal} | คะแนน: ${score100}/100`);
   lines.push("");
   lines.push(`🇹🇭 ทองไทย 96.5%: รับซื้อ ${buy ? fmt(buy,0) : "-"} | ขายออก ${sell ? fmt(sell,0) : "-"}`);
   lines.push(`🌍 XAUUSD: ${fmt(xau.close,2)} (${fmt(xau.changePct,2)}%)`);

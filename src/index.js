@@ -38,8 +38,7 @@ cron.schedule(process.env.CRON || "* 2 * * *", async () => {
 }, { timezone: THAI_TZ });
 
 // Daily 06:00 brief
-cron.schedule(process.env.DAILY_BRIEF_CRON || "*/5 * * * *", async () => {
-  // cron.schedule(process.env.DAILY_BRIEF_CRON || "0 6 * * *", async () => {
+cron.schedule(process.env.DAILY_BRIEF_CRON || "*/10 * * * *", async () => {
   try {
     const now = thaiNow();
     await runDailyBrief(now.format("DD/MM/YYYY"));
