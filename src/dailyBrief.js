@@ -124,18 +124,48 @@ function smartBuyZoneNoRSI({ price, support, xauChangePct, dxyChangePct, us10yCh
   return { label: "Wait ⏳", zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}` };
 }
 
-function detectLiquidity(price, support) {
+function detectLiquiditySweep(price, support, changePct) {
 
   if (!Number.isFinite(price) || !Number.isFinite(support))
     return null;
 
   const dist = (price - support) / support;
 
-  if (dist < 0.01 && dist > 0)
-    return `Liquidity below ${fmt(support,0)}`;
+  if (dist < 0.005 && dist > 0 && changePct < -1) {
+    return `⚠️ Liquidity sweep likely below ${fmt(support,0)}`;
+  }
 
-  if (price < support)
-    return `Stops swept below ${fmt(support,0)}`;
+  if (price < support) {
+    return `💧 Stops triggered below ${fmt(support,0)}`;
+  }
+
+  return null;
+}
+
+function detectReversal(ctx) {
+
+  const { xau, dxy, us10y, spx, support } = ctx;
+
+  if (!Number.isFinite(xau.close) || !Number.isFinite(support))
+    return null;
+
+  const nearSupport =
+    Math.abs(xau.close - support) / support < 0.01;
+
+  if (
+    nearSupport &&
+    xau.changePct > -1 &&
+    dxy.changePct <= 0
+  ) {
+    return "🔄 Reversal potential near support";
+  }
+
+  if (
+    spx.changePct < -1 &&
+    dxy.changePct <= 0
+  ) {
+    return "🔄 Gold may bounce with risk-off";
+  }
 
   return null;
 }
@@ -313,7 +343,13 @@ export async function runDailyBrief(nowThaiStr = "") {
     us10yChangePct: us10y.changePct,
   });
 
-  const liquidity = detectLiquidity(xau.close, support);
+  const liquiditySweep = detectLiquiditySweep(
+    xau.close,
+    support,
+    xau.changePct
+  );
+
+  const reversalSignal = detectReversal(ctx);
 
   const crashRisk = detectCrashRisk(ctx);
 
@@ -339,8 +375,10 @@ export async function runDailyBrief(nowThaiStr = "") {
   lines.push("");
 
   lines.push(`🤖 Buy Probability: ${buyProbability}%`);
-  if (liquidity)
-  lines.push(`💧 ${liquidity}`);
+  if (liquiditySweep)
+  lines.push(liquiditySweep);
+  if (reversalSignal)
+  lines.push(reversalSignal);
   if (crashRisk)
   lines.push(crashRisk);
 
