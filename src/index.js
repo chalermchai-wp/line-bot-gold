@@ -25,7 +25,7 @@ initDb().then(
   (e) => console.error("❌ initDb failed:", e)
 );
 
-cron.schedule(process.env.CRON || "*/15 * * * *", async () => {
+cron.schedule(process.env.CRON || "* 3 * * *", async () => {
   try {
     await runOnce();
   } catch (e) {
