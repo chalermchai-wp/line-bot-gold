@@ -11,12 +11,13 @@ app.use(webhookApp);
 app.get("/", (_, res) => res.send("gold-bot running"));
 
 const port = Number(process.env.PORT);
+const host = process.env.HOST || "0.0.0.0";
 if (!port) {
   console.error("PORT is missing (Plesk should provide it)");
   process.exit(1);
 }
 
-app.listen(port, "0.0.0.0", () => console.log(`Listening on :${port}`));
+app.listen(port, host, () => console.log(`Listening on host: ${host},  :${port}`));
 
 // init DB after server is up (important for Plesk)
 initDb().then(
