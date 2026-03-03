@@ -11,6 +11,32 @@ function fmt(n, digits = 2) {
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: digits }).format(n);
 }
 
+function detectTrend(price, ema20, ema50) {
+
+  if (!price || !ema20 || !ema50) return "-";
+
+  if (price > ema20 && ema20 > ema50)
+    return "Uptrend 📈";
+
+  if (price < ema20 && ema20 < ema50)
+    return "Downtrend 📉";
+
+  return "Sideway ↔";
+}
+
+function detectBuyZone(price, support, rsi14) {
+
+  if (!price || !support) return "-";
+  const nearSupport = Math.abs(price - support) / support < 0.01;
+  if (nearSupport && rsi14 < 40)
+    return "Buy zone 🟢";
+
+  if (price < support)
+    return "Break support ⚠️";
+
+  return "Wait ⏳";
+}
+
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
 
 function scoreToSignal(score100) {
@@ -67,6 +93,16 @@ function buildScoreParts(ctx) {
     else { score -= 0.3; parts.push("ต่ำกว่า EMA50"); }
   }
 
+  if (ctx.xau.close > ctx.ema20 && ctx.ema20 > ctx.ema50) {
+    score += 1;
+    parts.push("trend ขาขึ้น");
+  }
+  
+  if (ctx.xau.close < ctx.ema20 && ctx.ema20 < ctx.ema50) {
+    score -= 1;
+    parts.push("trend ขาลง");
+  }
+
   score = Math.round(score * 10) / 10;
   return { score, parts };
 }
@@ -76,6 +112,9 @@ export async function runDailyBrief(nowThaiStr = "") {
   const thai = await fetchHSHGoldBar965();
   const buy = thai?.buyPrice ?? null;
   const sell = thai?.sellPrice ?? null;
+  
+  const trend = detectTrend(xau.close, ema20, ema50);
+  const buyZone = detectBuyZone(xau.close, support, rsi14);
 
   // 2) TradingView quotes (symbols configurable)
   const SYM_XAU = process.env.TV_XAUUSD || "OANDA:XAUUSD";
@@ -97,25 +136,28 @@ export async function runDailyBrief(nowThaiStr = "") {
   let support = null, resistance = null;
 
   try {
-    const nowSec = Math.floor(Date.now() / 1000);
-    // const fromSec = nowSec - 200 * 24 * 3600; // ~200 days back
+
     const hist = await tvHistory(SYM_XAU, "D", 200);
-    // const hist = await tvHistory(SYM_XAU, "D", fromSec, nowSec);
+  
     const closes = (hist.c || []).map(Number).filter(Number.isFinite);
+  
+    if (closes.length > 20) {
+      ema20 = ema(closes, 20);
+      ema50 = ema(closes, 50);
+      rsi14 = rsi(closes, 14);
+    }
+  
     const highs = (hist.h || []).map(Number).filter(Number.isFinite);
     const lows = (hist.l || []).map(Number).filter(Number.isFinite);
-
-    ema20 = ema(closes, 20);
-    ema50 = ema(closes, 50);
-    rsi14 = rsi(closes, 14);
-
-    // Use latest daily candle high/low as R/S (fallback to scan high/low)
+  
     if (highs.length) resistance = highs[highs.length - 1];
     if (lows.length) support = lows[lows.length - 1];
+  
   } catch (e) {
-    // fallback to scan values (may be last bar high/low)
+  
     support = Number.isFinite(xau.low) ? xau.low : null;
     resistance = Number.isFinite(xau.high) ? xau.high : null;
+  
   }
 
   const ctx = { xau, dxy, us10y, usdthb, spx, ema20, ema50, rsi14, support, resistance };
@@ -134,6 +176,12 @@ export async function runDailyBrief(nowThaiStr = "") {
   lines.push(`🌍 XAUUSD: ${fmt(xau.close,2)} (${fmt(xau.changePct,2)}%)`);
   lines.push(`💵 DXY: ${fmt(dxy.close,2)} (${fmt(dxy.changePct,2)}%) | 🏦 US10Y: ${fmt(us10y.close,3)} (${fmt(us10y.changePct,2)}%)`);
   lines.push(`💱 USDTHB: ${fmt(usdthb.close,3)} (${fmt(usdthb.changePct,2)}%) | 📈 SPX: ${fmt(spx.close,2)} (${fmt(spx.changePct,2)}%)`);
+  lines.push("");
+
+  lines.push(`📈 Trend: ${trend}`);
+  lines.push("");
+
+  lines.push(`🎯 Buy Zone: ${buyZone}`);
   lines.push("");
 
   lines.push(`🧭 แนวรับ/แนวต้าน (D1): S ${support ? fmt(support,2) : "-"} | R ${resistance ? fmt(resistance,2) : "-"}`);
