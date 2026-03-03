@@ -1,62 +1,130 @@
 import axios from "axios";
 
-/**
- * TradingView Scanner (unofficial) - good for latest quote & 1D change.
- * This often works without auth, but may change anytime.
- */
-export async function tvScan(symbol, extraColumns = []) {
-  const columns = [
-    "name",
-    "description",
-    "close",
-    "change",
-    "change_abs",
-    "high",
-    "low",
-  ].concat(extraColumns);
+const TV_HEADERS = {
+  "User-Agent":
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+  "Content-Type": "application/json",
+  Origin: "https://www.tradingview.com",
+  Referer: "https://www.tradingview.com/",
+};
 
-  const body = {
-    filter: [{ left: "name", operation: "equal", right: symbol }],
-    options: { lang: "en" },
-    markets: ["forex", "indices", "futures", "crypto"],
-    symbols: { query: { types: [] }, tickers: [symbol] },
-    columns,
-    sort: { sortBy: "name", sortOrder: "asc" },
-    range: [0, 1],
-  };
+// เลือก endpoint ตามประเภทตลาด + มี fallback
+function scanEndpointsFor(symbol) {
+  const s = String(symbol || "").toUpperCase();
 
-  const { data } = await axios.post("https://scanner.tradingview.com/global/scan", body, {
+  // ทอง spot หลายทีอยู่หมวด CFD/FOREX ใน TV
+  if (s.startsWith("OANDA:") || s.startsWith("FX_IDC:")) {
+    return [
+      "https://scanner.tradingview.com/forex/scan",
+      "https://scanner.tradingview.com/cfd/scan",
+      "https://scanner.tradingview.com/global/scan",
+    ];
+  }
+
+  // ดัชนี/ยีลด์ (TVC:...) มักอยู่ global ได้ แต่ใส่ fallback ไว้
+  if (s.startsWith("TVC:") || s.startsWith("SP:") || s.startsWith("CBOE:")) {
+    return [
+      "https://scanner.tradingview.com/global/scan",
+      "https://scanner.tradingview.com/america/scan",
+    ];
+  }
+
+  // default
+  return [
+    "https://scanner.tradingview.com/global/scan",
+    "https://scanner.tradingview.com/forex/scan",
+    "https://scanner.tradingview.com/cfd/scan",
+    "https://scanner.tradingview.com/america/scan",
+  ];
+}
+
+async function postScan(url, payload) {
+  const res = await axios.post(url, payload, {
+    headers: TV_HEADERS,
     timeout: 15000,
-    headers: { "Content-Type": "application/json" },
+    validateStatus: () => true,
   });
 
-  const row = data?.data?.[0];
-  if (!row?.d) throw new Error(`TradingView scan returned no data for ${symbol}`);
-  const d = row.d;
-  const idx = (col) => columns.indexOf(col);
-
-  const close = Number(d[idx("close")]);
-  const changePct = Number(d[idx("change")]); // percent
-  const changeAbs = Number(d[idx("change_abs")]);
-  const high = Number(d[idx("high")]);
-  const low = Number(d[idx("low")]);
-
-  return { symbol, close, changePct, changeAbs, high, low, raw: d, columns };
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`TV scan HTTP ${res.status} from ${url}`);
+  }
+  return res.data;
 }
 
 /**
- * TradingView UDF History (unofficial).
- * Works on many symbols: /history?symbol=OANDA:XAUUSD&resolution=D&from=...&to=...
+ * ดึง quote แบบเร็ว (close + %change 1D + high/low 1D ถ้ามี)
  */
-export async function tvHistory(symbol, resolution, fromSec, toSec) {
+export async function tvScan(symbol) {
+  const payload = {
+    symbols: { tickers: [symbol] },
+    columns: ["close", "change", "change_abs", "high", "low", "description"],
+  };
+
+  const endpoints = scanEndpointsFor(symbol);
+  let lastErr = null;
+
+  for (const url of endpoints) {
+    try {
+      const data = await postScan(url, payload);
+      const row = data?.data?.[0];
+
+      if (!row?.d) {
+        lastErr = new Error(`TradingView scan returned no data for ${symbol} via ${url}`);
+        continue;
+      }
+
+      const d = row.d;
+      return {
+        symbol,
+        price: Number(d[0]),
+        changePct: Number(d[1]),
+        changeAbs: Number(d[2]),
+        high: d[3] != null ? Number(d[3]) : null,
+        low: d[4] != null ? Number(d[4]) : null,
+        description: d[5] ?? null,
+        source: url,
+      };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  throw lastErr ?? new Error(`TradingView scan failed for ${symbol}`);
+}
+
+/**
+ * ดึงแท่งเทียน (history) เพื่อคำนวณ EMA/RSI + D1 high/low
+ * ใช้ UDF history endpoint (unofficial) — ใส่ headers ให้คล้าย browser
+ */
+export async function tvHistory(symbol, resolution = "D", bars = 120) {
+  const nowSec = Math.floor(Date.now() / 1000);
+  const fromSec = nowSec - bars * 86400;
+
+  // UDF history endpoint
   const url = "https://www.tradingview.com/charting_library/datafeed/udf/history";
-  const { data } = await axios.get(url, {
+
+  const res = await axios.get(url, {
+    headers: TV_HEADERS,
     timeout: 20000,
-    params: { symbol, resolution, from: fromSec, to: toSec },
+    params: {
+      symbol,
+      resolution,
+      from: fromSec,
+      to: nowSec,
+    },
+    validateStatus: () => true,
   });
 
-  if (!data || data.s !== "ok") {
-    throw new Error(`TradingView history not ok for ${symbol}: ${JSON.stringify(data)?.slice(0,200)}`);
+  if (res.status < 200 || res.status >= 300) {
+    throw new Error(`TV history HTTP ${res.status}`);
   }
-  return data; // {t,c,o,h,l,v}
+  const data = res.data;
+
+  if (data?.s !== "ok") {
+    throw new Error(`TV history not ok for ${symbol}: ${JSON.stringify(data)?.slice?.(0, 200)}`);
+  }
+
+  // data: { t:[], o:[], h:[], l:[], c:[], v:[] }
+  return data;
 }
