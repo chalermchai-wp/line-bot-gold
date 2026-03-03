@@ -1,47 +1,31 @@
-// src/services/rss.js
-import axios from "axios";
-import { XMLParser } from "fast-xml-parser";
+import Parser from "rss-parser";
 
-const parser = new XMLParser({
-  ignoreAttributes: false,
-  attributeNamePrefix: "@_",
-});
+const parser = new Parser();
 
-export async function fetchRssItems(url, limit = 5) {
-  const { data } = await axios.get(url, {
-    timeout: 15000,
-    headers: { "User-Agent": "gold-bot/1.0" },
-  });
+/**
+ * Reads RSS feeds and returns flattened items.
+ * URLs should be provided via NEWS_RSS_URLS (comma-separated).
+ */
+export async function fetchRssTopItems(limitPerFeed = 3) {
+  const raw = (process.env.NEWS_RSS_URLS || "").trim();
+  if (!raw) return [];
+  const urls = raw.split(",").map(s => s.trim()).filter(Boolean);
 
-  const xml = typeof data === "string" ? data : String(data);
-  const obj = parser.parse(xml);
-
-  // RSS 2.0
-  const rssItems = obj?.rss?.channel?.item;
-  if (rssItems) return normalizeItems(rssItems, limit);
-
-  // Atom
-  const atomItems = obj?.feed?.entry;
-  if (atomItems) return normalizeItems(atomItems, limit);
-
-  return [];
-}
-
-function normalizeItems(items, limit) {
-  const arr = Array.isArray(items) ? items : [items];
-  return arr
-    .filter(Boolean)
-    .slice(0, limit)
-    .map((it) => {
-      const title = it?.title?.["#text"] ?? it?.title ?? "";
-      const link =
-        it?.link?.["@_href"] ??
-        it?.link?.href ??
-        it?.link ??
-        it?.guid ??
-        "";
-      const pubDate = it?.pubDate ?? it?.updated ?? it?.published ?? "";
-      return { title: String(title).trim(), link: String(link).trim(), pubDate: String(pubDate).trim() };
-    })
-    .filter((x) => x.title);
+  const items = [];
+  for (const url of urls) {
+    try {
+      const feed = await parser.parseURL(url);
+      for (const it of (feed.items || []).slice(0, limitPerFeed)) {
+        items.push({
+          source: feed.title || url,
+          title: it.title || "(no title)",
+          link: it.link,
+          pubDate: it.isoDate || it.pubDate,
+        });
+      }
+    } catch (e) {
+      items.push({ source: url, title: `RSS error: ${(e?.message || e)}`, link: undefined, pubDate: undefined });
+    }
+  }
+  return items;
 }

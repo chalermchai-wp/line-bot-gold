@@ -1,42 +1,43 @@
-// src/marketHours.js
-// Thai market window utility (Asia/Bangkok)
+import dayjs from "dayjs";
+import utc from "dayjs/plugin/utc.js";
+import timezone from "dayjs/plugin/timezone.js";
 
-export const TH_TZ = "Asia/Bangkok";
+dayjs.extend(utc);
+dayjs.extend(timezone);
 
-function parseHHMM(s) {
-  const m = String(s || "").trim().match(/^(\d{1,2}):(\d{2})$/);
+const TZ = "Asia/Bangkok";
+
+function parseHHMM(s, fallback) {
+  const v = (s || "").trim() || fallback;
+  const m = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(v);
   if (!m) throw new Error(`Invalid HH:MM time: ${s}`);
-  const hh = Number(m[1]);
-  const mm = Number(m[2]);
-  if (hh < 0 || hh > 23 || mm < 0 || mm > 59) throw new Error(`Invalid HH:MM time: ${s}`);
-  return hh * 60 + mm;
-}
-
-function nowMinutesInTH() {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: TH_TZ,
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date());
-
-  const hh = Number(parts.find(p => p.type === "hour")?.value ?? "0");
-  const mm = Number(parts.find(p => p.type === "minute")?.value ?? "0");
-  return hh * 60 + mm;
+  return { h: Number(m[1]), m: Number(m[2]) };
 }
 
 /**
- * Returns true if current Thailand time is inside the window.
- * Default window (requested): 06:00–02:00 (wraps midnight)
+ * Returns true if current TH time is within [open, close], supporting ranges that cross midnight.
+ * Example: open=06:00, close=02:00 => active from 06:00..23:59 and 00:00..02:00.
  */
-export function isInThaiMarketWindow() {
-  const open = parseHHMM(process.env.MARKET_OPEN || "06:00");
-  const close = parseHHMM(process.env.MARKET_CLOSE || "02:00");
-  const now = nowMinutesInTH();
+export function isWithinThaiHours(now = dayjs()) {
+  const openStr = process.env.MARKET_OPEN || "06:00";
+  const closeStr = process.env.MARKET_CLOSE || "02:00";
+  const open = parseHHMM(openStr, "06:00");
+  const close = parseHHMM(closeStr, "02:00");
 
-  // Normal window (e.g., 09:00–17:00)
-  if (open <= close) return now >= open && now <= close;
+  const t = now.tz(TZ);
+  const minutes = t.hour() * 60 + t.minute();
+  const openMin = open.h * 60 + open.m;
+  const closeMin = close.h * 60 + close.m;
 
-  // Wrap window (e.g., 06:00–02:00)
-  return now >= open || now <= close;
+  if (openMin <= closeMin) {
+    return minutes >= openMin && minutes <= closeMin;
+  }
+  // crosses midnight
+  return minutes >= openMin || minutes <= closeMin;
 }
+
+export function thaiNow() {
+  return dayjs().tz(TZ);
+}
+
+export const THAI_TZ = TZ;

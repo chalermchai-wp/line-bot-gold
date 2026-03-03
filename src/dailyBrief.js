@@ -1,132 +1,148 @@
-// src/dailyBrief.js
 import "dotenv/config";
 import { listUserIds } from "./db.js";
 import { pushText } from "./line.js";
 import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js";
-import { fetchTradingViewQuotes } from "./services/tradingview.js";
-import { fetchRssItems } from "./services/rss.js";
-import { TH_TZ } from "./marketHours.js";
+import { ema, rsi } from "./indicators.js";
+import { tvScan, tvHistory } from "./services/tradingview.js";
+import { fetchRssTopItems } from "./services/rss.js";
 
 function fmt(n, digits = 2) {
-  if (n == null || !Number.isFinite(Number(n))) return "-";
-  return new Intl.NumberFormat("th-TH", { maximumFractionDigits: digits }).format(Number(n));
+  if (!Number.isFinite(n)) return "-";
+  return new Intl.NumberFormat("th-TH", { maximumFractionDigits: digits }).format(n);
 }
 
-function nowTH() {
-  // ISO-ish string in Thailand time for display
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: TH_TZ,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date());
+function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
+
+function scoreToSignal(score) {
+  if (score >= 2) return "Bullish";
+  if (score <= -2) return "Bearish";
+  return "Neutral";
 }
 
-function buildOutlook({ xau, dxy, us10y, usdthb, spx }) {
-  // Simple scoring model (rule-based)
+function buildScoreParts(ctx) {
+  const parts = [];
   let score = 0;
-  const reasons = [];
 
-  const dxyUp = (dxy?.changePct ?? 0) > 0;
-  const yUp = (us10y?.changePct ?? 0) > 0;
-  const spxDown = (spx?.changePct ?? 0) < 0;
-  const thbWeak = (usdthb?.changePct ?? 0) > 0;
+  // Core macro drivers
+  if (ctx.dxy.changePct > 0) { score -= 1; parts.push("DXY↑ กดทอง"); }
+  else if (ctx.dxy.changePct < 0) { score += 1; parts.push("DXY↓ หนุนทอง"); }
 
-  if (dxyUp) { score -= 1; reasons.push("DXY แข็ง"); } else reasons.push("DXY อ่อน/ทรงตัว");
-  if (yUp) { score -= 1; reasons.push("US10Y ขึ้น"); } else reasons.push("US10Y ลง/ทรงตัว");
-  if (spxDown) { score += 0.5; reasons.push("หุ้นอ่อนตัว (risk-off)"); } else reasons.push("หุ้นทรง/บวก");
-  if (thbWeak) reasons.push("บาทอ่อน (หนุนทองไทย)");
+  if (ctx.us10y.changePct > 0) { score -= 1; parts.push("US10Y↑ กดทอง"); }
+  else if (ctx.us10y.changePct < 0) { score += 0.5; parts.push("US10Y↓ หนุนทอง"); }
 
-  const bias =
-    score <= -1.5 ? "Bearish" :
-    score >= 0.5 ? "Bullish" :
-    "Neutral";
+  if (ctx.spx.changePct < 0) { score += 0.5; parts.push("หุ้นอ่อนตัว (risk-off)"); }
+  else if (ctx.spx.changePct > 0) { score -= 0.2; parts.push("หุ้นบวก (risk-on)"); }
 
-  // crude zones using intraday high/low if available
-  const support = xau?.low != null ? fmt(xau.low) : "-";
-  const resistance = xau?.high != null ? fmt(xau.high) : "-";
+  // Directional confirmation from XAUUSD 1D change
+  if (ctx.xau.changePct > 0) { score += 0.8; parts.push("ทองโลกบวก"); }
+  else if (ctx.xau.changePct < 0) { score -= 0.8; parts.push("ทองโลกติดลบ"); }
 
-  return { bias, reasons: reasons.join(", "), support, resistance };
+  // Thai gold bias from USDTHB (for local pricing)
+  if (ctx.usdthb.changePct > 0) { score += 0.3; parts.push("บาทอ่อน (หนุนทองไทย)"); }
+  else if (ctx.usdthb.changePct < 0) { score -= 0.3; parts.push("บาทแข็ง (กดทองไทย)"); }
+
+  // Technicals (if available)
+  if (Number.isFinite(ctx.rsi14)) {
+    if (ctx.rsi14 <= 30) { score += 1.0; parts.push(`RSI(${fmt(ctx.rsi14,0)}) oversold`); }
+    else if (ctx.rsi14 >= 70) { score -= 1.0; parts.push(`RSI(${fmt(ctx.rsi14,0)}) overbought`); }
+  }
+
+  if (Number.isFinite(ctx.ema20) && Number.isFinite(ctx.xau.close)) {
+    if (ctx.xau.close > ctx.ema20) { score += 0.5; parts.push("เหนือ EMA20"); }
+    else { score -= 0.5; parts.push("ต่ำกว่า EMA20"); }
+  }
+  if (Number.isFinite(ctx.ema50) && Number.isFinite(ctx.xau.close)) {
+    if (ctx.xau.close > ctx.ema50) { score += 0.3; parts.push("เหนือ EMA50"); }
+    else { score -= 0.3; parts.push("ต่ำกว่า EMA50"); }
+  }
+
+  score = Math.round(score * 10) / 10;
+  return { score, parts };
 }
 
-export async function runDailyBrief() {
-  const userIds = await listUserIds();
-  if (!userIds.length) return;
+export async function runDailyBrief(nowThaiStr = "") {
+  // 1) Thai gold price
+  const thai = await fetchHSHGoldBar965();
+  const buy = thai?.buyPrice ?? null;
+  const sell = thai?.sellPrice ?? null;
 
-  // 1) Thai gold (HSH 96.5%)
-  const thai = await fetchHSHGoldBar965(); // {buy,sell,fetchedAt}
+  // 2) TradingView quotes (symbols configurable)
+  const SYM_XAU = process.env.TV_XAUUSD || "OANDA:XAUUSD";
+  const SYM_DXY = process.env.TV_DXY || "TVC:DXY";
+  const SYM_US10Y = process.env.TV_US10Y || "TVC:US10Y";
+  const SYM_USDTHB = process.env.TV_USDTHB || "FX_IDC:USDTHB";
+  const SYM_SPX = process.env.TV_SPX || "SP:SPX";
 
-  // 2) Global market snapshot via TradingView
-  // You can override tickers via env if you want different exchanges/symbols.
-  // Default tickers are common on TradingView.
-  const tickers = {
-    XAUUSD: process.env.TV_XAUUSD || "OANDA:XAUUSD",
-    DXY: process.env.TV_DXY || "TVC:DXY",
-    US10Y: process.env.TV_US10Y || "TVC:US10Y",
-    USDTHB: process.env.TV_USDTHB || "FX_IDC:USDTHB",
-    SPX: process.env.TV_SPX || "SP:SPX",
-  };
+  const [xau, dxy, us10y, usdthb, spx] = await Promise.all([
+    tvScan(SYM_XAU),
+    tvScan(SYM_DXY),
+    tvScan(SYM_US10Y),
+    tvScan(SYM_USDTHB),
+    tvScan(SYM_SPX),
+  ]);
 
-  const quotes = await fetchTradingViewQuotes(Object.values(tickers));
-  const xau = quotes[tickers.XAUUSD];
-  const dxy = quotes[tickers.DXY];
-  const us10y = quotes[tickers.US10Y];
-  const usdthb = quotes[tickers.USDTHB];
-  const spx = quotes[tickers.SPX];
+  // 3) Try compute EMA/RSI from last ~120 daily closes
+  let ema20 = null, ema50 = null, rsi14 = null;
+  let support = null, resistance = null;
 
-  // 3) News (RSS list, multi-source)
-  const rssList = (process.env.NEWS_RSS_URLS || "")
-    .split(",")
-    .map(s => s.trim())
-    .filter(Boolean);
+  try {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const fromSec = nowSec - 200 * 24 * 3600; // ~200 days back
+    const hist = await tvHistory(SYM_XAU, "D", fromSec, nowSec);
+    const closes = (hist.c || []).map(Number).filter(Number.isFinite);
+    const highs = (hist.h || []).map(Number).filter(Number.isFinite);
+    const lows = (hist.l || []).map(Number).filter(Number.isFinite);
 
-  const news = [];
-  for (const url of rssList) {
-    try {
-      const items = await fetchRssItems(url, 3);
-      for (const it of items) news.push(it);
-    } catch {
-      // ignore a broken feed
+    ema20 = ema(closes, 20);
+    ema50 = ema(closes, 50);
+    rsi14 = rsi(closes, 14);
+
+    // Use latest daily candle high/low as R/S (fallback to scan high/low)
+    if (highs.length) resistance = highs[highs.length - 1];
+    if (lows.length) support = lows[lows.length - 1];
+  } catch (e) {
+    // fallback to scan values (may be last bar high/low)
+    support = Number.isFinite(xau.low) ? xau.low : null;
+    resistance = Number.isFinite(xau.high) ? xau.high : null;
+  }
+
+  const ctx = { xau, dxy, us10y, usdthb, spx, ema20, ema50, rsi14, support, resistance };
+  const { score, parts } = buildScoreParts(ctx);
+  const signal = scoreToSignal(score);
+
+  // 4) News
+  const news = await fetchRssTopItems(2);
+
+  const lines = [];
+  lines.push(`🌅 Gold Brief 06:00 (TH) ${nowThaiStr || ""}`.trim());
+  lines.push(`สัญญาณ: ${signal} | คะแนน: ${score}`);
+  lines.push("");
+  lines.push(`🇹🇭 ทองไทย 96.5%: รับซื้อ ${buy ? fmt(buy,0) : "-"} | ขายออก ${sell ? fmt(sell,0) : "-"}`);
+  lines.push(`🌍 XAUUSD: ${fmt(xau.close,2)} (${fmt(xau.changePct,2)}%)`);
+  lines.push(`💵 DXY: ${fmt(dxy.close,2)} (${fmt(dxy.changePct,2)}%) | 🏦 US10Y: ${fmt(us10y.close,3)} (${fmt(us10y.changePct,2)}%)`);
+  lines.push(`💱 USDTHB: ${fmt(usdthb.close,3)} (${fmt(usdthb.changePct,2)}%) | 📈 SPX: ${fmt(spx.close,2)} (${fmt(spx.changePct,2)}%)`);
+  lines.push("");
+
+  lines.push(`🧭 แนวรับ/แนวต้าน (D1): S ${support ? fmt(support,2) : "-"} | R ${resistance ? fmt(resistance,2) : "-"}`);
+  lines.push(`📊 EMA20: ${ema20 ? fmt(ema20,2) : "-"} | EMA50: ${ema50 ? fmt(ema50,2) : "-"} | RSI14: ${Number.isFinite(rsi14) ? fmt(rsi14,0) : "-"}`);
+  lines.push("");
+  lines.push(`เหตุผลหลัก: ${parts.slice(0, 5).join(" • ")}`);
+
+  if (!process.env.NEWS_RSS_URLS) {
+    lines.push("");
+    lines.push("🗞 ข่าว: (ยังไม่ได้ตั้งค่า NEWS_RSS_URLS)");
+  } else if (news.length) {
+    lines.push("");
+    lines.push("🗞 ข่าวที่น่ามีผล:");
+    for (const it of news.slice(0, 3)) {
+      lines.push(`- ${it.title}`);
     }
   }
 
-  const outlook = buildOutlook({ xau, dxy, us10y, usdthb, spx });
-
-  const lines = [];
-  lines.push(`🌅 Daily Gold Brief (TH ${nowTH()})`);
-  lines.push("");
-  lines.push(`🇹🇭 ทองไทย 96.5% (HSH)`);
-  lines.push(`รับซื้อ: ${fmt(thai.buy, 0)} | ขายออก: ${fmt(thai.sell, 0)}`);
-  lines.push("");
-  lines.push("🌎 ตลาดต่างประเทศ (TradingView)");
-  lines.push(`XAUUSD: ${fmt(xau?.price)} (${fmt(xau?.changePct)}%)`);
-  lines.push(`DXY: ${fmt(dxy?.price)} (${fmt(dxy?.changePct)}%)`);
-  lines.push(`US10Y: ${fmt(us10y?.price, 3)} (${fmt(us10y?.changePct)}%)`);
-  lines.push(`USDTHB: ${fmt(usdthb?.price, 3)} (${fmt(usdthb?.changePct)}%)`);
-  lines.push(`SPX: ${fmt(spx?.price)} (${fmt(spx?.changePct)}%)`);
-  lines.push("");
-  lines.push(`📌 Outlook วันนี้: ${outlook.bias}`);
-  lines.push(`เหตุผล: ${outlook.reasons}`);
-  if (outlook.support !== "-" || outlook.resistance !== "-") {
-    lines.push(`โซน XAUUSD: แนวรับ ${outlook.support} | แนวต้าน ${outlook.resistance}`);
-  }
-
-  const topNews = news.slice(0, 5);
-  if (topNews.length) {
-    lines.push("");
-    lines.push("🗞 ข่าวที่อาจกระทบทอง:");
-    topNews.forEach((n, i) => {
-      // Keep message short for LINE
-      lines.push(`${i + 1}) ${n.title}`);
-    });
-  } else {
-    lines.push("");
-    lines.push("🗞 ข่าว: (ยังไม่ได้ตั้งค่า NEWS_RSS_URLS)");
-  }
-
   const msg = lines.join("\n");
-  await Promise.all(userIds.map(uid => pushText(uid, msg)));
+
+  const userIds = await listUserIds();
+  for (const uid of userIds) {
+    try { await pushText(uid, msg); } catch (e) { /* ignore */ }
+  }
 }

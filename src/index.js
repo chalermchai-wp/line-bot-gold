@@ -1,11 +1,11 @@
 import "dotenv/config";
 import express from "express";
 import cron from "node-cron";
+import { isWithinThaiHours, thaiNow, THAI_TZ } from "./marketHours.js";
+import { runDailyBrief } from "./dailyBrief.js";
 import { webhookApp } from "./webhook.js";
 import { runOnce } from "./worker.js";
-import { runDailyBrief } from "./dailyBrief.js";
 import { initDb } from "./db.js";
-import { isInThaiMarketWindow, TH_TZ } from "./marketHours.js";
 
 const app = express();
 app.use(webhookApp);
@@ -27,22 +27,23 @@ initDb().then(
   (e) => console.error("❌ initDb failed:", e)
 );
 
-// Price watcher schedule (every minute by default) but will execute only
-// during the configured Thai market window.
+// Market-time watcher (runs only within MARKET_OPEN..MARKET_CLOSE, TH time)
 cron.schedule(process.env.CRON || "* 2 * * *", async () => {
   try {
-    if (!isInThaiMarketWindow()) return;
+    if (!isWithinThaiHours(thaiNow())) return;
     await runOnce();
   } catch (e) {
     console.error(e);
   }
-}, { timezone: TH_TZ });
+}, { timezone: THAI_TZ });
 
-// Daily brief at 06:00 Thailand time
-cron.schedule(process.env.DAILY_BRIEF_CRON || "0 6 * * *", async () => {
+// Daily 06:00 brief
+cron.schedule(process.env.DAILY_BRIEF_CRON || "*/5 * * * *", async () => {
+  // cron.schedule(process.env.DAILY_BRIEF_CRON || "0 6 * * *", async () => {
   try {
-    await runDailyBrief();
+    const now = thaiNow();
+    await runDailyBrief(now.format("DD/MM/YYYY"));
   } catch (e) {
     console.error(e);
   }
-}, { timezone: TH_TZ });
+}, { timezone: THAI_TZ });
