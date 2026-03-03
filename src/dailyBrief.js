@@ -3,78 +3,20 @@ import { listUserIds } from "./db.js";
 import { pushText } from "./line.js";
 import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js";
 import { ema, rsi } from "./indicators.js";
-import { tvScan, tvHistory } from "./services/tradingview.js";
+import { tvScan } from "./services/tradingview.js";
 import { fetchRssTopItems } from "./services/rss.js";
 
-// 1 oz = 31.1035 g, 1 บาททอง = 15.244 g, ไทย 96.5%
-// factor ≈ 15.244/31.1035 = 0.4901
-const THAI_GOLD_FACTOR = 0.4901;
-
-function calcThaiFairValue(xauUsdPerOz, usdthb) {
-  if (!Number.isFinite(xauUsdPerOz) || !Number.isFinite(usdthb)) return null;
-  return xauUsdPerOz * usdthb * THAI_GOLD_FACTOR; // บาททองคำ (THB/บาททอง)
-}
-
-function calcPremium(thaiSell, fair) {
-  if (!Number.isFinite(thaiSell) || !Number.isFinite(fair)) return null;
-  return thaiSell - fair; // + = แพงกว่า fair, - = ถูกกว่า fair
-}
-
-function trendSummary(price, ema20, ema50, support, resistance) {
-  if (Number.isFinite(price) && Number.isFinite(ema20) && Number.isFinite(ema50)) {
-    if (price > ema20 && ema20 > ema50) return "Uptrend 📈";
-    if (price < ema20 && ema20 < ema50) return "Downtrend 📉";
-    return "Sideway ↔";
-  }
-  // fallback ถ้าไม่มี EMA
-  if (Number.isFinite(price) && Number.isFinite(support) && Number.isFinite(resistance)) {
-    const pos = (price - support) / (resistance - support);
-    if (pos >= 0.7) return "แข็งแถวแนวต้าน ↗";
-    if (pos <= 0.3) return "อ่อนแถวแนวรับ ↘";
-    return "แกว่งกลางกรอบ ↔";
-  }
-  return "-";
-}
-
-// เกณฑ์แปลผล premium (ปรับได้ตามสไตล์)
-function premiumLabel(p) {
-  if (!Number.isFinite(p)) return "-";
-  if (p >= 800) return "แพงมาก";
-  if (p >= 300) return "แพง";
-  if (p <= -800) return "ถูกมาก";
-  if (p <= -300) return "ถูก";
-  return "ใกล้เคียง";
+function trendFromSR(price, support, resistance) {
+  if (!Number.isFinite(price) || !Number.isFinite(support) || !Number.isFinite(resistance) || resistance === support) return "-";
+  const pos = (price - support) / (resistance - support); // 0..1
+  if (pos >= 0.7) return "แข็งแถวแนวต้าน ↗";
+  if (pos <= 0.3) return "อ่อนแถวแนวรับ ↘";
+  return "แกว่งกลางกรอบ ↔";
 }
 
 function fmt(n, digits = 2) {
   if (!Number.isFinite(n)) return "-";
   return new Intl.NumberFormat("th-TH", { maximumFractionDigits: digits }).format(n);
-}
-
-function detectTrend(price, ema20, ema50) {
-
-  if (!price || !ema20 || !ema50) return "-";
-
-  if (price > ema20 && ema20 > ema50)
-    return "Uptrend 📈";
-
-  if (price < ema20 && ema20 < ema50)
-    return "Downtrend 📉";
-
-  return "Sideway ↔";
-}
-
-function detectBuyZone(price, support, rsi14) {
-
-  if (!price || !support) return "-";
-  const nearSupport = Math.abs(price - support) / support < 0.01;
-  if (nearSupport && rsi14 < 40)
-    return "Buy zone 🟢";
-
-  if (price < support)
-    return "Break support ⚠️";
-
-  return "Wait ⏳";
 }
 
 function clamp(n, a, b) { return Math.max(a, Math.min(b, n)); }
@@ -147,56 +89,47 @@ function buildScoreParts(ctx) {
   return { score, parts };
 }
 
-function smartBuyZone({ price, support, resistance, rsi14, xauChangePct, dxyChangePct, us10yChangePct }) {
-  if (!Number.isFinite(price) || !Number.isFinite(support)) {
-    return { label: "-", zone: "-", note: "ไม่มีแนวรับ/ราคา" };
-  }
+function trendFromSR(price, support, resistance) {
+  if (!Number.isFinite(price) || !Number.isFinite(support) || !Number.isFinite(resistance) || resistance === support) return "-";
+  const pos = (price - support) / (resistance - support); // 0..1
+  if (pos >= 0.7) return "แข็งแถวแนวต้าน ↗";
+  if (pos <= 0.3) return "อ่อนแถวแนวรับ ↘";
+  return "แกว่งกลางกรอบ ↔";
+}
 
-  const distToSupportPct = ((price - support) / support) * 100; // ใกล้ 0 คืออยู่แถวแนวรับ
-  const pressure = (Number.isFinite(dxyChangePct) ? (dxyChangePct > 0 ? 1 : -0.5) : 0)
-                 + (Number.isFinite(us10yChangePct) ? (us10yChangePct > 0 ? 1 : -0.3) : 0);
+function smartBuyZoneNoRSI({ price, support, xauChangePct, dxyChangePct, us10yChangePct }) {
+  if (!Number.isFinite(price) || !Number.isFinite(support)) return { label: "-", zone: "-" };
 
-  // โซนซื้อ = รอบๆ แนวรับ (ปรับ % ได้)
-  const bandPct = 0.35; // 0.35% รอบแนวรับ
+  const bandPctBase = 0.35; // โซนรอบแนวรับ 0.35%
+  const pressure =
+    (Number.isFinite(dxyChangePct) ? (dxyChangePct > 0 ? 1 : -0.5) : 0) +
+    (Number.isFinite(us10yChangePct) ? (us10yChangePct > 0 ? 1 : -0.3) : 0);
+
+  // ถ้าแรงกดสูง → ให้โซนแคบลง (รอให้ใกล้แนวรับมากขึ้น)
+  const bandPct = pressure >= 1.5 ? 0.25 : bandPctBase;
+
   const zoneLow = support * (1 - bandPct / 100);
   const zoneHigh = support * (1 + bandPct / 100);
 
-  // เงื่อนไขเข้มขึ้นถ้าแรงกดสูง
-  const needRSI = pressure >= 1.5; // ถ้า DXY+US10Y กดแรง จะต้องการ RSI confirm มากขึ้น
+  const distPct = ((price - support) / support) * 100;
+  const nearSupport = distPct <= bandPct;
 
-  const rsiOk = Number.isFinite(rsi14) ? (rsi14 <= 42) : !needRSI; // ถ้าไม่มี RSI แล้วแรงกดไม่แรงมาก ก็ยังพอให้ผ่านได้
-  const nearSupport = distToSupportPct <= bandPct; // อยู่ในกรอบโซนแนวรับ
-  const momentumTooHot = Number.isFinite(xauChangePct) ? (xauChangePct > 1.2) : false; // เด้งแรงเกินไป ไม่น่าไล่
+  const mom = Number.isFinite(xauChangePct) ? xauChangePct : 0;
 
-  // หลุดแนวรับ = เสี่ยง
+  // ลงแรงมาก = หลีกเลี่ยงไล่รับ
+  if (mom <= -3.0) {
+    return { label: "Knife falling ⚠️ (รอเด้ง)", zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}` };
+  }
+
   if (price < support * 0.997) {
-    return {
-      label: "Breakdown ⚠️",
-      zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}`,
-      note: "หลุดแนวรับแล้ว รอสัญญาณกลับตัว",
-    };
+    return { label: "Breakdown ⚠️ (หลุดแนวรับ)", zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}` };
   }
 
-  // Buy zone
-  if (nearSupport && rsiOk && !momentumTooHot) {
-    return {
-      label: "Buy Zone 🟢",
-      zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}`,
-      note: Number.isFinite(rsi14) ? `RSI ${fmt(rsi14,0)} + ใกล้แนวรับ` : "ใกล้แนวรับ (ยังไม่มี RSI)",
-    };
+  if (nearSupport) {
+    return { label: "Buy Zone 🟢 (รับแถวแนวรับ)", zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}` };
   }
 
-  // ถ้าห่างแนวรับมาก ให้รอ
-  const noteParts = [];
-  noteParts.push(`ห่างแนวรับ ${fmt(distToSupportPct,2)}%`);
-  if (needRSI && !Number.isFinite(rsi14)) noteParts.push("ควรมี RSI ช่วยยืนยัน");
-  if (Number.isFinite(rsi14)) noteParts.push(`RSI ${fmt(rsi14,0)}`);
-
-  return {
-    label: "Wait ⏳",
-    zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}`,
-    note: noteParts.join(" • "),
-  };
+  return { label: "Wait ⏳", zone: `${fmt(zoneLow,2)} - ${fmt(zoneHigh,2)}` };
 }
 
 export async function runDailyBrief(nowThaiStr = "") {
@@ -222,49 +155,26 @@ export async function runDailyBrief(nowThaiStr = "") {
 
   // 3) Try compute EMA/RSI from last ~120 daily closes
   let ema20 = null, ema50 = null, rsi14 = null;
-  let support = null, resistance = null;
+  let support = Number.isFinite(xau.low) ? xau.low : null;
+  let resistance = Number.isFinite(xau.high) ? xau.high : null;
 
-  try {
-
-    const hist = await tvHistory(SYM_XAU, "D", 200);
-  
-    const closes = (hist.c || []).map(Number).filter(Number.isFinite);
-  
-    if (closes.length > 20) {
-      ema20 = ema(closes, 20);
-      ema50 = ema(closes, 50);
-      rsi14 = rsi(closes, 14);
-    }
-  
-    const highs = (hist.h || []).map(Number).filter(Number.isFinite);
-    const lows = (hist.l || []).map(Number).filter(Number.isFinite);
-  
-    if (highs.length) resistance = highs[highs.length - 1];
-    if (lows.length) support = lows[lows.length - 1];
-  
-  } catch (e) {
-  
-    support = Number.isFinite(xau.low) ? xau.low : null;
-    resistance = Number.isFinite(xau.high) ? xau.high : null;
-  
-  }
-
-  const buyZone = detectBuyZone(xau.close, support, rsi14);
 
   const ctx = { xau, dxy, us10y, usdthb, spx, ema20, ema50, rsi14, support, resistance };
   const { score: rawScore, parts } = buildScoreParts(ctx);
   const score100 = normalizeScoreTo100(rawScore);
   const signal = scoreToSignal(score100);
 
-  const fair = calcThaiFairValue(xau.close, usdthb.close);
-  const thaiPrice = sell ?? buy ?? null;
-  const premium = calcPremium(thaiPrice, fair ?? NaN);
+  const THAI_GOLD_FACTOR = 0.4901;
+  const fair = Number.isFinite(xau.close) && Number.isFinite(usdthb.close)
+    ? xau.close * usdthb.close * THAI_GOLD_FACTOR
+    : null;
+  
+  const thaiRef = (sell ?? buy);
+  const premium = (Number.isFinite(thaiRef) && Number.isFinite(fair)) ? (thaiRef - fair) : null;
 
-  const buyInfo = smartBuyZone({
+  const buyInfo = smartBuyZoneNoRSI({
     price: xau.close,
     support,
-    resistance,
-    rsi14,
     xauChangePct: xau.changePct,
     dxyChangePct: dxy.changePct,
     us10yChangePct: us10y.changePct,
@@ -278,21 +188,16 @@ export async function runDailyBrief(nowThaiStr = "") {
   lines.push(`สัญญาณ: ${signal} | คะแนน: ${score100}/100`);
   lines.push("");
   lines.push(`🇹🇭 ทองไทย 96.5%: รับซื้อ ${buy ? fmt(buy,0) : "-"} | ขายออก ${sell ? fmt(sell,0) : "-"}`);
-  lines.push(
-    `🧮 Fair Value ทองไทย: ${fair ? fmt(fair,0) : "-"} | Premium: ${premium!=null ? fmt(premium,0) : "-"}`
-    );
+  lines.push(`🧮 Fair Value ทองไทย: ${fair ? fmt(fair,0) : "-"} | Premium: ${premium!=null ? fmt(premium,0) : "-"}`);
   lines.push(`🌍 XAUUSD: ${fmt(xau.close,2)} (${fmt(xau.changePct,2)}%)`);
   lines.push(`💵 DXY: ${fmt(dxy.close,2)} (${fmt(dxy.changePct,2)}%) | 🏦 US10Y: ${fmt(us10y.close,3)} (${fmt(us10y.changePct,2)}%)`);
   lines.push(`💱 USDTHB: ${fmt(usdthb.close,3)} (${fmt(usdthb.changePct,2)}%) | 📈 SPX: ${fmt(spx.close,2)} (${fmt(spx.changePct,2)}%)`);
   lines.push("");
 
-  const trend = trendSummary(xau.close, ema20, ema50, support, resistance);
+  const trend = trendFromSR(xau.close, support, resistance);
   lines.push(`📈 Trend: ${trend}`);
-  lines.push("");
-
   lines.push(`🎯 Buy Zone: ${buyInfo.label}`);
   lines.push(`   โซน: ${buyInfo.zone}`);
-  lines.push(`   หมายเหตุ: ${buyInfo.note}`);
   lines.push("");
 
   lines.push(`🧭 แนวรับ/แนวต้าน (D1): S ${support ? fmt(support,2) : "-"} | R ${resistance ? fmt(resistance,2) : "-"}`);
