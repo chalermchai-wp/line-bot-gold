@@ -156,61 +156,26 @@ export async function tvScan(symbolKey) {
 
 export async function tvHistory(symbol, resolution = "D", bars = 200) {
 
-  const now = Math.floor(Date.now() / 1000);
-  const from = now - bars * 86400;
+  const url = "https://min-api.cryptocompare.com/data/v2/histoday";
 
-  const url = "https://tvc4.investing.com/history";
-
-  const res = await axios.get(
-    `https://www.tradingview.com/charting_library/datafeed/udf/history`,
-    {
-      headers: TV_HEADERS,
-      params: {
-        symbol,
-        resolution,
-        from,
-        to: now
-      }
+  const res = await axios.get(url, {
+    params: {
+      fsym: "XAU",
+      tsym: "USD",
+      limit: bars
     }
-  );
+  });
 
-  const data = res.data;
+  const data = res.data?.Data?.Data;
 
-  if (data?.s !== "ok") {
-    throw new Error("TV history failed");
+  if (!data || !data.length) {
+    throw new Error("History fetch failed");
   }
 
-  return data;
+  return {
+    c: data.map(x => x.close),
+    h: data.map(x => x.high),
+    l: data.map(x => x.low)
+  };
+
 }
-
-// export async function tvHistory(symbol, resolution = "D", bars = 120) {
-//   const nowSec = Math.floor(Date.now() / 1000);
-//   const fromSec = nowSec - bars * 86400;
-
-//   // UDF history endpoint
-//   const url = "https://www.tradingview.com/charting_library/datafeed/udf/history";
-
-//   const res = await axios.get(url, {
-//     headers: TV_HEADERS,
-//     timeout: 20000,
-//     params: {
-//       symbol,
-//       resolution,
-//       from: fromSec,
-//       to: nowSec,
-//     },
-//     validateStatus: () => true,
-//   });
-
-//   if (res.status < 200 || res.status >= 300) {
-//     throw new Error(`TV history HTTP ${res.status}`);
-//   }
-//   const data = res.data;
-
-//   if (data?.s !== "ok") {
-//     throw new Error(`TV history not ok for ${symbol}: ${JSON.stringify(data)?.slice?.(0, 200)}`);
-//   }
-
-//   // data: { t:[], o:[], h:[], l:[], c:[], v:[] }
-//   return data;
-// }
