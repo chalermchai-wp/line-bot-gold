@@ -1,5 +1,7 @@
 import { BAHT_GOLD_GRAMS, getPortfolio, savePortfolio, insertTrade } from "./db.js";
 import { runDailyBrief } from "./dailyBrief.js";
+import { thaiNow } from "./marketHours.js";
+
 
 function parseQty(qtyStr) {
   const s = String(qtyStr).trim().toLowerCase();
