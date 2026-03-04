@@ -165,7 +165,7 @@ export async function buildStatus(currentSellPerBaht, headerNote = "") {
   lines.push("");
   lines.push("💰 PnL");
   lines.push(`Realized: ${formatTHB(realized)} บาท`);
-  lines.push(`Unrealized: ${formatTHB(unrealized)} บาท (อิงขายออก ${formatTHB(currentSellPerBaht)})`);
+  lines.push(`Unrealized: ${formatTHB(unrealized)} บาท (อิงราคารับซื้อ ${formatTHB(currentSellPerBaht)})`);
   lines.push(`Total: ${formatTHB(total)} บาท`);
 
   return lines.join("\n");
