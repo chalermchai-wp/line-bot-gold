@@ -106,7 +106,7 @@ export async function runOnce() {
 
   await insertPrice({ ts: price.fetchedAt, buy: price.buy, sell: price.sell });
 
-  const pnl = await calcPnL(price.sell);
+  const pnl = await calcPnL(price.buy);
 
   const userIds = await listUserIds();
   if (!userIds.length) return;
