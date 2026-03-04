@@ -40,7 +40,7 @@ webhookApp.post(
             });
             continue;
           }
-          const reply = await handleCommand(text, p.sell); // ✅ await
+          const reply = await handleCommand(text, p.buy); // ✅ await
 
           await client.replyMessage(ev.replyToken, {
             type: "text",

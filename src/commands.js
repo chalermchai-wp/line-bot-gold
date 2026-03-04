@@ -1,4 +1,5 @@
 import { BAHT_GOLD_GRAMS, getPortfolio, savePortfolio, insertTrade } from "./db.js";
+import { runDailyBrief } from "./dailyBrief.js";
 
 function parseQty(qtyStr) {
   const s = String(qtyStr).trim().toLowerCase();
@@ -24,6 +25,10 @@ export async function handleCommand(text, currentSellPerBaht) {
     const cmd = (parts[0] || "").toLowerCase();
   
     if (cmd === "status") return await buildStatus(currentSellPerBaht);
+    if (cmd === "new" || cmd === "news") {
+      const now = thaiNow();
+      return await runDailyBrief(now.format("DD/MM/YYYY"));
+    }
     if (cmd !== "buy" && cmd !== "sell") return null;
   
     const pricePerBaht = toNumber(parts[1]);
