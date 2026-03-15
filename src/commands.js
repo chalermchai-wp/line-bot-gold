@@ -29,7 +29,7 @@ export async function handleCommand(text, currentSellPerBaht) {
     if (cmd === "status") return await buildStatus(currentSellPerBaht);
     if (cmd === "new" || cmd === "news") {
       const now = thaiNow();
-      return await runDailyBrief(now.format("DD/MM/YYYY"));
+      return await runDailyBrief(now.format("DD/MM/YYYY"), true);
     }
     if (cmd !== "buy" && cmd !== "sell") return null;
   

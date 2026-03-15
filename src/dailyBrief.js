@@ -295,7 +295,7 @@ function autoTradingSignal(ctx) {
   return { action: "WAIT", reason: "อยู่กลางกรอบ/สัญญาณยังไม่ชัด" };
 }
 
-export async function runDailyBrief(nowThaiStr = "") {
+export async function runDailyBrief(nowThaiStr = "", isFromManual = false) {
   // 1) Thai gold price
   const thai = await fetchHSHGoldBar965();
   const buy = thai?.buyPrice ?? null;
@@ -410,6 +410,10 @@ export async function runDailyBrief(nowThaiStr = "") {
   }
 
   const msg = lines.join("\n");
+
+  if(isFromManual) {
+    return msg
+  }
 
   const userIds = await listUserIds();
   for (const uid of userIds) {

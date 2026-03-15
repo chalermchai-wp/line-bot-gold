@@ -41,7 +41,7 @@ cron.schedule(process.env.CRON || "* 2 * * *", async () => {
 cron.schedule(process.env.DAILY_BRIEF_CRON || "0 6 * * *", async () => {
   try {
     const now = thaiNow();
-    await runDailyBrief(now.format("DD/MM/YYYY"));
+    await runDailyBrief(now.format("DD/MM/YYYY"), false);
   } catch (e) {
     console.error(e);
   }
