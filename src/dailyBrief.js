@@ -299,8 +299,8 @@ async function getThaiPrice() {
   const hshPrice = await fetchHSHGoldBar965();
   console.log("hshPrice :", hshPrice)
 
-  let buy = hshPrice?.buyPrice ?? null;
-  let sell = hshPrice?.sellPrice ?? null;
+  let buyPrice = hshPrice?.buyPrice ?? null;
+  let sellPrice = hshPrice?.sellPrice ?? null;
 
   let source = "HSH"
 
@@ -308,8 +308,8 @@ async function getThaiPrice() {
   console.log("finoPrice :", finoPrice)
 
   if(!buy && !sell) {
-    buy = finoPrice?.thaiGoldAsk ;
-    sell = finoPrice?.thaiGoldBid ;
+    buyPrice = finoPrice?.thaiGoldAsk ;
+    sellPrice = finoPrice?.thaiGoldBid ;
     source = "FINNOMENA"
   }
   
