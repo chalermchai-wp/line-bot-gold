@@ -315,7 +315,7 @@ async function getThaiPrice() {
   }
 
   // fallback ถ้า HSH ไม่มีราคา
-  if (!buyPrice && !sellPrice && finoPrice) {
+  if (!!buyPrice && !!sellPrice && finoPrice) {
     buyPrice = finoPrice?.thaiGoldAsk ?? null;
     sellPrice = finoPrice?.thaiGoldBid ?? null;
     source = "FINNOMENA";
