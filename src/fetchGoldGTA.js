@@ -95,47 +95,11 @@ export async function fetchHSHMarketStatus() {
 
   const res = await axios.get(URL, {
     timeout: 15000,
-    responseType: "text",          // ✅ เอาเป็น text ก่อน จะได้ตรวจเอง
-    validateStatus: () => true,    // ✅ ไม่ throw เพื่อ debug ได้
     headers: {
-      Accept: "application/json, text/xml;q=0.9, */*;q=0.8",
+      Accept: "application/json",
       "User-Agent": "gold-bot/1.0"
     }
   });
 
-  const body = typeof res.data === "string" ? res.data : String(res.data ?? "");
-  const ct = String(res.headers?.["content-type"] ?? "");
-
-  if (res.status !== 200) {
-    throw new Error(`HSH http ${res.status} ct=${ct} head=${body.slice(0, 80)}`);
-  }
-
-  // ✅ JSON path (หลัก)
-  if (ct.includes("application/json") || body.trim().startsWith("[")) {
-    let arr;
-    try {
-      arr = JSON.parse(body);
-    } catch (e) {
-      throw new Error(`HSH JSON parse failed: ${e?.message || e}`);
-    }
-    if (!Array.isArray(arr)) throw new Error("HSH JSON is not array");
-    return pickFromJsonArray(arr);
-  }
-
-  // ✅ XML fallback
-  if (body.trim().startsWith("<")) {
-    return pickMarketStatusFromXmlText(body);
-  }
-
-  throw new Error(`HSH unknown format ct=${ct} head=${body.slice(0, 120)}`);
-}
-
-function pickMarketStatusFromXmlText(xmlText) {
-  const parser = new XMLParser({ ignoreAttributes: false, removeNSPrefix: true, trimValues: true });
-  const obj = parser.parse(xmlText);
-
-  // path ปกติของ HSH XML
-  const objStatus = obj?.RMIStatusResModel?.MarketStatus;
-
-  return objStatus;
+  return res?.data?.MarketStatus ?? null;
 }
