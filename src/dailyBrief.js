@@ -309,8 +309,11 @@ async function getThaiPrice() {
     console.error("Finnomena error:", e.message);
   }
 
-  let buyPrice = hshMarketStatus === "ON" ? hshPrice?.buyPrice : finoPrice?.thaiGoldAsk ?? null;
-  let sellPrice = hshMarketStatus === "ON" ? hshPrice?.sellPrice : finoPrice?.thaiGoldBid ?? null;
+  console.log("market s" , hshMarketStatus)
+  console.log("hsh pri" , hshPrice)
+
+  let buyPrice = hshMarketStatus === "ON" ? hshPrice?.buy : finoPrice?.thaiGoldAsk ?? null;
+  let sellPrice = hshMarketStatus === "ON" ? hshPrice?.sell : finoPrice?.thaiGoldBid ?? null;
   let source = hshMarketStatus === "ON" ? "HSH" : "FINNOMENA";
 
   return {
@@ -441,3 +444,18 @@ export async function runDailyBrief(nowThaiStr = "", isFromManual = false) {
     try { await pushText(uid, msg); } catch (e) { /* ignore */ }
   }
 }
+
+
+// ===== local test runner =====
+// if (import.meta.url === `file://${process.argv[1]}`) {
+//   (async () => {
+//     try {
+//       const msg = await runDailyBrief("LOCAL TEST", true);
+//       console.log("\n===== RESULT =====\n");
+//       console.log(msg);
+//       console.log("\n==================\n");
+//     } catch (err) {
+//       console.error("dailyBrief error:", err);
+//     }
+//   })();
+// }
