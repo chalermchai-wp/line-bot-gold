@@ -296,30 +296,37 @@ function autoTradingSignal(ctx) {
 }
 
 async function getThaiPrice() {
+
   const hshPrice = await fetchHSHGoldBar965();
-  console.log("hshPrice :", hshPrice)
+  console.log("hshPrice :", hshPrice);
 
   let buyPrice = hshPrice?.buyPrice ?? null;
   let sellPrice = hshPrice?.sellPrice ?? null;
 
-  let source = "HSH"
+  let source = "HSH";
 
-  const finoPrice = await fetchFinnomenaThaiGoldRealtime();
-  console.log("finoPrice :", finoPrice)
+  let finoPrice = null;
 
-  if(!buy && !sell) {
-    buyPrice = finoPrice?.thaiGoldAsk ;
-    sellPrice = finoPrice?.thaiGoldBid ;
-    source = "FINNOMENA"
+  try {
+    finoPrice = await fetchFinnomenaThaiGoldRealtime();
+    console.log("finoPrice :", finoPrice);
+  } catch (e) {
+    console.error("Finnomena error:", e.message);
   }
-  
+
+  // fallback ถ้า HSH ไม่มีราคา
+  if (!buyPrice && !sellPrice && finoPrice) {
+    buyPrice = finoPrice?.thaiGoldAsk ?? null;
+    sellPrice = finoPrice?.thaiGoldBid ?? null;
+    source = "FINNOMENA";
+  }
+
   return {
-    source: source,
+    source,
     buyPrice,
     sellPrice
-  }
-
-} 
+  };
+}
 
 export async function runDailyBrief(nowThaiStr = "", isFromManual = false) {
   // 1) Thai gold price
