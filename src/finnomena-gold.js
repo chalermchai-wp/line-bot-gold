@@ -2,9 +2,9 @@
 // Node 18+ ใช้ fetch ได้เลย
 
 const FINNOMENA_BASE = "https://www.finnomena.com";
-const THAI_GOLD_FACTOR = 0.49 * 0.965; // 0.47285
+export const THAI_GOLD_FACTOR = 0.49 * 0.965; // 0.47285
 
-function convertXauThbToBahtGold(xauthb, decimals = 2) {
+export function convertXauThbToBahtGold(xauthb, decimals = 2) {
   if (!Number.isFinite(xauthb)) {
     throw new Error(`Invalid XAUTHB price: ${xauthb}`);
   }
@@ -17,7 +17,7 @@ async function fetchJson(url, options = {}) {
   const res = await fetch(url, {
     method: "GET",
     headers: {
-      "Accept": "application/json",
+      Accept: "application/json",
       "User-Agent": "gold-bot/1.0",
       ...options.headers,
     },
@@ -36,7 +36,7 @@ async function fetchJson(url, options = {}) {
  * endpoint นี้คุณเจอจากหน้าเว็บ:
  * /fn3/api/v2/gold/spot/historical/C:XAUTHB/last_quote
  */
-async function fetchFinnomenaXauThbLastQuote() {
+export async function fetchFinnomenaXauThbLastQuote() {
   const url = `${FINNOMENA_BASE}/fn3/api/v2/gold/spot/historical/C:XAUTHB/last_quote`;
   const json = await fetchJson(url);
 
@@ -58,7 +58,7 @@ async function fetchFinnomenaXauThbLastQuote() {
 /**
  * ดึงราคาทองไทย realtime ตามสูตรเดียวกับหน้า Finnomena
  */
-async function fetchFinnomenaThaiGoldRealtime() {
+export async function fetchFinnomenaThaiGoldRealtime() {
   const quote = await fetchFinnomenaXauThbLastQuote();
 
   return {
@@ -79,7 +79,7 @@ async function fetchFinnomenaThaiGoldRealtime() {
  * endpoint ที่คุณเจอ:
  * /fn3/api/gold/trader/present
  */
-async function fetchFinnomenaTraderPresent() {
+export async function fetchFinnomenaTraderPresent() {
   const url = `${FINNOMENA_BASE}/fn3/api/gold/trader/present`;
   const json = await fetchJson(url);
 
@@ -100,11 +100,3 @@ async function fetchFinnomenaTraderPresent() {
     raw: json,
   };
 }
-
-module.exports = {
-  THAI_GOLD_FACTOR,
-  convertXauThbToBahtGold,
-  fetchFinnomenaXauThbLastQuote,
-  fetchFinnomenaThaiGoldRealtime,
-  fetchFinnomenaTraderPresent,
-};

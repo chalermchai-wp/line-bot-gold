@@ -4,7 +4,7 @@ import { pushText } from "./line.js";
 import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js";
 import { tvScan } from "./services/tradingview.js";
 import { fetchRssTopItems } from "./services/rss.js";
-import { fetchFinnomenaThaiGoldRealtime, fetchFinnomenaTraderPresent } from "./finnomena-gold";
+import { fetchFinnomenaThaiGoldRealtime, fetchFinnomenaTraderPresent } from "./finnomena-gold.js";
 
 function fmt(n, digits = 2) {
   if (!Number.isFinite(n)) return "-";
