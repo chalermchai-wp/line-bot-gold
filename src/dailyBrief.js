@@ -2,9 +2,9 @@ import "dotenv/config";
 import { listUserIds } from "./db.js";
 import { pushText } from "./line.js";
 import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js";
-import { ema, rsi } from "./indicators.js";
 import { tvScan } from "./services/tradingview.js";
 import { fetchRssTopItems } from "./services/rss.js";
+import { fetchFinnomenaThaiGoldRealtime, fetchFinnomenaTraderPresent } from "./finnomena-gold";
 
 function fmt(n, digits = 2) {
   if (!Number.isFinite(n)) return "-";
@@ -295,18 +295,38 @@ function autoTradingSignal(ctx) {
   return { action: "WAIT", reason: "อยู่กลางกรอบ/สัญญาณยังไม่ชัด" };
 }
 
+async function getThaiPrice() {
+  const hshPrice = await fetchHSHGoldBar965();
+  console.log("hshPrice :", hshPrice)
+
+  let buy = hshPrice?.buyPrice ?? null;
+  let sell = hshPrice?.sellPrice ?? null;
+
+  let source = "HSH"
+
+  const finoPrice = await fetchFinnomenaThaiGoldRealtime();
+  console.log("finoPrice :", finoPrice)
+
+  if(!buy && !sell) {
+    buy = finoPrice?.thaiGoldAsk ;
+    sell = finoPrice?.thaiGoldBid ;
+    source = "FINNOMENA"
+  }
+  
+  return {
+    source: source,
+    buyPrice,
+    sellPrice
+  }
+
+} 
+
 export async function runDailyBrief(nowThaiStr = "", isFromManual = false) {
   // 1) Thai gold price
-  const thai = await fetchHSHGoldBar965();
+  const thai = await getThaiPrice();
   const buy = thai?.buyPrice ?? null;
   const sell = thai?.sellPrice ?? null;
-  
-  // 2) TradingView quotes (symbols configurable)
-  const SYM_XAU = process.env.TV_XAUUSD || "OANDA:XAUUSD";
-  const SYM_DXY = process.env.TV_DXY || "TVC:DXY";
-  const SYM_US10Y = process.env.TV_US10Y || "TVC:US10Y";
-  const SYM_USDTHB = process.env.TV_USDTHB || "FX_IDC:USDTHB";
-  const SYM_SPX = process.env.TV_SPX || "SP:SPX";
+  const source = thai?.source ?? null;
 
   const [xau, dxy, us10y, usdthb, spx] = await Promise.all([
     tvScan("XAUUSD"),
@@ -320,7 +340,6 @@ export async function runDailyBrief(nowThaiStr = "", isFromManual = false) {
   let ema20 = null, ema50 = null, rsi14 = null;
   let support = Number.isFinite(xau.low) ? xau.low : null;
   let resistance = Number.isFinite(xau.high) ? xau.high : null;
-
 
   const ctx = { xau, dxy, us10y, usdthb, spx, ema20, ema50, rsi14, support, resistance };
   const { score: rawScore, parts } = buildScoreParts(ctx);
@@ -364,9 +383,10 @@ export async function runDailyBrief(nowThaiStr = "", isFromManual = false) {
   const news = await fetchRssTopItems(2);
 
   const lines = [];
-  lines.push(`🌅 Gold Brief 06:00 (TH) ${nowThaiStr || ""}`.trim());
+  lines.push(`🌅 Gold Brief ${nowThaiStr || ""}`.trim());
   lines.push(`สัญญาณ: ${signal} | คะแนน: ${score100}/100`);
   lines.push("");
+  lines.push(`🇹🇭 ทองไทย 96.5% จาก: ${source}, ตลาด: ${source === "HSH" ?  "เปิด" : source === "FINNOMENA" ? "ปิด" : ""}`);
   lines.push(`🇹🇭 ทองไทย 96.5%: รับซื้อ ${buy ? fmt(buy,0) : "-"} | ขายออก ${sell ? fmt(sell,0) : "-"}`);
   lines.push(`🧮 Fair Value ทองไทย: ${fair ? fmt(fair,0) : "-"} | Premium: ${premium!=null ? fmt(premium,0) : "-"}`);
   lines.push(`🌍 XAUUSD: ${fmt(xau.close,2)} (${fmt(xau.changePct,2)}%)`);
