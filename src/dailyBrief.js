@@ -1,7 +1,7 @@
 import "dotenv/config";
 import { listUserIds } from "./db.js";
 import { pushText } from "./line.js";
-import { fetchHSHGoldBar965 } from "./fetchGoldGTA.js";
+import { fetchHSHGoldBar965, fetchHSHMarketStatus } from "./fetchGoldGTA.js";
 import { tvScan } from "./services/tradingview.js";
 import { fetchRssTopItems } from "./services/rss.js";
 import { fetchFinnomenaThaiGoldRealtime, fetchFinnomenaTraderPresent } from "./finnomena-gold.js";
@@ -297,14 +297,9 @@ function autoTradingSignal(ctx) {
 
 async function getThaiPrice() {
 
+  const hshMarketStatus = await fetchHSHMarketStatus();
+
   const hshPrice = await fetchHSHGoldBar965();
-  console.log("hshPrice :", hshPrice);
-
-  let buyPrice = hshPrice?.buyPrice ?? null;
-  let sellPrice = hshPrice?.sellPrice ?? null;
-
-  let source = "HSH";
-
   let finoPrice = null;
 
   try {
@@ -314,17 +309,15 @@ async function getThaiPrice() {
     console.error("Finnomena error:", e.message);
   }
 
-  // fallback ถ้า HSH ไม่มีราคา
-  if (!!buyPrice && !!sellPrice && finoPrice) {
-    buyPrice = finoPrice?.thaiGoldAsk ?? null;
-    sellPrice = finoPrice?.thaiGoldBid ?? null;
-    source = "FINNOMENA";
-  }
+  let buyPrice = hshMarketStatus === "ON" ? hshPrice?.buyPrice : finoPrice?.thaiGoldAsk ?? null;
+  let sellPrice = hshMarketStatus === "ON" ? hshPrice?.sellPrice : finoPrice?.thaiGoldBid ?? null;
+  let source = hshMarketStatus === "ON" ? "HSH" : "FINNOMENA";
 
   return {
     source,
     buyPrice,
-    sellPrice
+    sellPrice,
+    hshMarketStatus
   };
 }
 
@@ -334,6 +327,7 @@ export async function runDailyBrief(nowThaiStr = "", isFromManual = false) {
   const buy = thai?.buyPrice ?? null;
   const sell = thai?.sellPrice ?? null;
   const source = thai?.source ?? null;
+  const hshMarketStatus = thai.hshMarketStatus ?? null;
 
   const [xau, dxy, us10y, usdthb, spx] = await Promise.all([
     tvScan("XAUUSD"),
@@ -393,7 +387,7 @@ export async function runDailyBrief(nowThaiStr = "", isFromManual = false) {
   lines.push(`🌅 Gold Brief ${nowThaiStr || ""}`.trim());
   lines.push(`สัญญาณ: ${signal} | คะแนน: ${score100}/100`);
   lines.push("");
-  lines.push(`🇹🇭 ทองไทย 96.5% จาก: ${source}, ตลาด: ${source === "HSH" ?  "เปิด" : source === "FINNOMENA" ? "ปิด" : ""}`);
+  lines.push(`🇹🇭 ทองไทย 96.5% จาก: ${source}, ตลาด: ${hshMarketStatus === "ON" ?  "เปิด" : "ปิด"}`);
   lines.push(`🇹🇭 ทองไทย 96.5%: รับซื้อ ${buy ? fmt(buy,0) : "-"} | ขายออก ${sell ? fmt(sell,0) : "-"}`);
   lines.push(`🧮 Fair Value ทองไทย: ${fair ? fmt(fair,0) : "-"} | Premium: ${premium!=null ? fmt(premium,0) : "-"}`);
   lines.push(`🌍 XAUUSD: ${fmt(xau.close,2)} (${fmt(xau.changePct,2)}%)`);
