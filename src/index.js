@@ -28,7 +28,7 @@ initDb().then(
 );
 
 // Market-time watcher (runs only within MARKET_OPEN..MARKET_CLOSE, TH time)
-cron.schedule(process.env.CRON || "* 2 * * *", async () => {
+cron.schedule(process.env.CRON || "* */4 * * *", async () => {
   try {
     if (!isWithinThaiHours(thaiNow())) return;
     await runOnce();
